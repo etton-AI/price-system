@@ -39,7 +39,7 @@ function parseWithNode(filePath: string, supplier: string): PriceEntry[] {
   }
 
   // 加载对应解析器（纯 JS CommonJS 模块）
-  const parsersDir = path.join(process.cwd(), "比价工具", "price_db", "parsers");
+  const parsersDir = path.join(process.cwd(), "parsers");
   let results: PriceEntry[] = [];
 
   switch (supplier) {
