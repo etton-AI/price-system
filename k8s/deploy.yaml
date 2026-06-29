@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: price-system
+  namespace: default
+  labels:
+    app: price-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: price-system
+  template:
+    metadata:
+      labels:
+        app: price-system
+    spec:
+      containers:
+        - name: price-system
+          image: ghcr.io/etton-ai/price-system:latest
+          ports:
+            - containerPort: 3000
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /price-query
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /price-query
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          env:
+            - name: NODE_ENV
+              value: "production"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: price-system
+  namespace: default
+  labels:
+    app: price-system
+spec:
+  type: ClusterIP
+  selector:
+    app: price-system
+  ports:
+    - port: 3000
+      targetPort: 3000
+      protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: price-system
+  namespace: default
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    # 以下注解按 Sealos 域名配置自行调整
+    # nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+spec:
+  rules:
+    - host: price.example.com   # ← 替换为你的 Sealos 域名
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: price-system
+                port:
+                  number: 3000
