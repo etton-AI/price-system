@@ -522,24 +522,55 @@ function parseUSToCanada(ws) {
 function parseUSToMexico(ws, channelName) {
   const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
   const results = [];
-  // 美转墨结构: R3+ 品类行, col0=品类描述, col2=1CBM+, col3=5CBM+, col4=10CBM+
+
+  // Detect format: 限时达/快线 use col0 layout, 普线/敏感货 use col1 layout (col0 empty)
+  let colOffset = 0;
+  if (data.length > 2) {
+    const r0 = String(data[0]?.[0] || "").trim();
+    const r1 = String(data[0]?.[1] || "").trim();
+    // If col0 is empty but col1 has title, use col1-based format
+    if (!r0 && (r1.includes("美转墨") || r1.includes("普线") || r1.includes("敏感"))) {
+      colOffset = 1;
+    }
+  }
+
   for (let ri = 2; ri < data.length; ri++) {
     const row = data[ri];
-    const category = String(row[0] || "").trim();
+    const category = String(row[colOffset] || "").trim();
     if (!category || category.includes("产品类目") || category.includes("海派渠道") || category.includes("备注")) continue;
     if (category.includes("体积") || category.includes("计费方式") || category.includes("品牌查询") || category.includes("统配")) continue;
+    if (category.includes("医疗器械")) continue; // 敏感货子类，同一渠道
+
+    // Extract channel code (may be in col 1+colOffset)
+    const chCode = String(row[1 + colOffset] || "").trim();
+    const effectiveChannelName = chCode || channelName;
 
     const cbmTiers = [
-      { label: "1CBM+", value: 1, col: 2 },
-      { label: "5CBM+", value: 5, col: 3 },
-      { label: "10CBM+", value: 10, col: 4 },
+      { label: "1CBM+", value: 1, col: 2 + colOffset },
+      { label: "5CBM+", value: 5, col: 3 + colOffset },
+      { label: "10CBM+", value: 10, col: 4 + colOffset },
+      { label: "30CBM+", value: 30, col: 5 + colOffset },
     ];
+
+    // Extract transit info from last column
+    let transitMin = 35, transitMax = 50, transitDesc = "35-50天";
+    const specCol = 6 + colOffset;
+    const specText = String(row[specCol] || "").trim();
+    if (specText && specText.length > 0) {
+      const daysMatch = specText.match(/(\d+)[-–](\d+)\s*(?:个)?自然日/);
+      if (daysMatch) { transitMin = parseInt(daysMatch[1]); transitMax = parseInt(daysMatch[2]); transitDesc = daysMatch[0]; }
+      else {
+        const singleMatch = specText.match(/开船后(\d+)/);
+        if (singleMatch) { transitMin = parseInt(singleMatch[1]); transitMax = transitMin + 5; transitDesc = singleMatch[0]; }
+      }
+    }
+
     for (const tier of cbmTiers) {
       const price = parseFloat(row[tier.col]);
       if (!isNaN(price) && price > 0 && price < 99999) {
         results.push(makeRecord({
           country: "墨西哥",
-          channelName,
+          channelName: effectiveChannelName,
           transportMode: "海运",
           vesselConfig: "美转墨(WHL/COSCO/YM)",
           vesselTags: ["美转墨","WHL","COSCO","YM"],
@@ -552,7 +583,7 @@ function parseUSToMexico(ws, channelName) {
           minQtyValue: tier.value,
           price,
           priceUnit: "元/CBM",
-          transitMin: 35, transitMax: 40, transitDesc: "35-40天",
+          transitMin, transitMax, transitDesc,
           sourceSheet: channelName,
         }));
       }

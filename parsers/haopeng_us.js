@@ -24,6 +24,7 @@ const XLSX = require("xlsx");
 const { detectCountry, detectAllCountries } = require("./country-detector");
 
 const SUPPLIER = "皓鹏国际";
+const COUNTRY = "美国";
 
 // ── 默认发货城市 ──
 const DEFAULT_CITIES = ["深圳", "广州", "东莞", "中山", "惠州", "义乌", "上海", "宁波", "杭州", "厦门", "泉州", "福州"];
@@ -901,6 +902,208 @@ function parseEUAirSeaRail(ws) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// 巴西海运 — 产品品类 × CBM阶梯
+// ═══════════════════════════════════════════════════════════════
+function parseBrazilSea(ws) {
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+  // R8=header(1-5CBM,6-10CBM,11-25CBM,26+CBM), R9+=品类行
+  const tiers = [{col:3,label:"1-5CBM",v:1},{col:4,label:"6-10CBM",v:6},{col:5,label:"11-25CBM",v:11},{col:6,label:"26+CBM",v:26}];
+  const results = [];
+  for (let ri = 9; ri < data.length; ri++) {
+    const row = data[ri]; const cat = String(row[1]||"").trim();
+    if (!cat || cat.includes("五类")||cat.includes("反倾销")) continue;
+    for (const t of tiers) {
+      const p = parseFloat(row[t.col]); if (isNaN(p)||p<=0) continue;
+      results.push(makeRecord({supplier:SUPPLIER,country:COUNTRY,channel_name:"巴西海运",transport_mode:"海运",vessel_config:"海运圣保罗",vessel_tags:["海运","巴西"],delivery_method:"卡派",destType:"warehouse",destCode:"圣保罗海外仓",destRegion:"巴西",billingType:"包税",minQty:t.label,minQtyValue:t.v,unit_price:p,price_unit:"元/CBM",transitMin:45,transitMax:60,transitDesc:"45-60天",source_sheet:"巴西海运"}));
+    }
+  }
+  return results;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 澳大利亚空运海运
+// ═══════════════════════════════════════════════════════════════
+function parseAustraliaAirSea(ws) {
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+  const results = [];
+  // R5-R7: headers, R8+: data → 空运普货(col2-5) + 空运带电(col6-9)
+  const channels = [
+    {name:"澳洲空运普货(卡派/快递包税)",startCol:2,tiers:[{o:0,l:"11KG+",v:11},{o:1,l:"45KG+",v:45},{o:2,l:"100KG+",v:100},{o:3,l:"500KG+",v:500}],transitDesc:"9天左右签收",transitMin:7,transitMax:11},
+    {name:"澳洲空运带电(卡派/快递包税)",startCol:6,tiers:[{o:0,l:"11KG+",v:11},{o:1,l:"45KG+",v:45},{o:2,l:"100KG+",v:100},{o:3,l:"500KG+",v:500}],transitDesc:"9天左右签收",transitMin:7,transitMax:11},
+  ];
+  for (let ri=8;ri<data.length;ri++) {
+    const row=data[ri];const label=String(row[1]||"").trim();
+    if(!label||label.includes("不装电子烟")||label.includes("亚马逊仓")||label.includes("以下非FBA"))continue;
+    if(label.includes("以下非FBA")||label.includes("其他私人地址"))continue;
+    let whs=[];const whMatch=label.match(/[A-Z]{2,}\d/g);
+    if(whMatch)whs=whMatch;
+    else if(label.includes("商业地址")||label.includes("万邑通")||label.includes("谷仓")||label.includes("其他"))whs=[label.replace(/\r?\n/g," ").trim().slice(0,40)];
+    else whs=[label.replace(/\r?\n/g," ").trim().slice(0,40)];
+    for(const ch of channels){
+      for(const t of ch.tiers){
+        const p=parseFloat(row[ch.startCol+t.o]);if(isNaN(p)||p<=0)continue;
+        for(const w of whs){
+          results.push(makeRecord({supplier:SUPPLIER,country:COUNTRY,channel_name:ch.name,transport_mode:"空运",vessel_config:"空运",vessel_tags:["空运","澳洲"],delivery_method:"卡派",destType:"warehouse",destCode:w,destRegion:"澳大利亚",billingType:"包税",minQty:t.l,minQtyValue:t.v,unit_price:p,price_unit:"元/KG",transitMin:ch.transitMin,transitMax:ch.transitMax,transitDesc:ch.transitDesc,source_sheet:"澳大利亚空运海运"}));
+        }
+      }
+    }
+  }
+  return results;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 墨西哥空派美转墨直航 — 空运 + 美转墨特快 + 美转墨快线
+// ═══════════════════════════════════════════════════════════════
+function parseMexicoAirSea(ws) {
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+  const results = [];
+  // R5-R6: section headers, R8: tier headers, R9+: data
+  // 空运: col2-5, 美转墨特快18日达: col6-9
+  const sections = [
+    {name:"墨西哥空运",startCol:2,tiers:[{o:0,l:"21KG+",v:21},{o:1,l:"45KG+",v:45},{o:2,l:"100KG+",v:100},{o:3,l:"500KG+",v:500}],transitDesc:"空运航班"},
+    {name:"美转墨特快18日达",startCol:6,tiers:[{o:0,l:"0.1CBM+",v:0.1},{o:1,l:"1CBM+",v:1},{o:2,l:"3CBM+",v:3},{o:3,l:"8CBM+",v:8}],transitDesc:"18天左右",transitMin:16,transitMax:20},
+  ];
+  for(let ri=9;ri<data.length;ri++){
+    const row=data[ri];const label=String(row[1]||"").trim();
+    if(!label||label.includes("渠道暂停")||label.includes("成本过高")||label.includes("因洛杉矶")||label==="墨西哥")continue;
+    if(label.startsWith("墨西哥")&&label.length<20)continue;
+    const dest=label.includes("一件代发")?"皓鹏墨西哥海外仓":label.replace(/\s+/g,"").slice(0,30);
+    if(!dest||dest.length<2)continue;
+    for(const sec of sections){
+      for(const t of sec.tiers){
+        const p=parseFloat(row[sec.startCol+t.o]);if(isNaN(p)||p<=0)continue;
+        results.push(makeRecord({supplier:SUPPLIER,country:COUNTRY,channel_name:sec.name,transport_mode:sec.name.includes("空运")?"空运":"海运",vessel_config:sec.name.includes("特快")?"美森正班":"统配",vessel_tags:sec.name.includes("特快")?["美森"]:["普船"],delivery_method:"卡派",destType:"warehouse",destCode:dest,destRegion:"墨西哥",billing_type:sec.name.includes("空运")?"包税":"包税",minQty:t.l,minQtyValue:t.v,unit_price:p,price_unit:sec.name.includes("空运")?"元/KG":"元/CBM",transitMin:sec.transitMin,transitMax:sec.transitMax,transitDesc:sec.transitDesc,source_sheet:"墨西哥空派美转墨直航"}));
+      }
+    }
+  }
+  // Also check for 美转墨快线 section (col10-13?)
+  // Look for more sections
+  for(let ri=10;ri<data.length;ri++){
+    const r5=String(data[5]?.[10]||"").trim();
+    if(r5&&r5.includes("快线")){
+      const row=data[ri];const label=String(row[1]||"").trim();
+      if(!label||label.includes("渠道暂停")||label.includes("成本过高"))continue;
+      const dest=label.includes("一件代发")?"皓鹏墨西哥海外仓":label.slice(0,30);
+      const tiers=[{o:0,l:"0.1CBM+",v:0.1},{o:1,l:"1CBM+",v:1},{o:2,l:"3CBM+",v:3},{o:3,l:"8CBM+",v:8}];
+      for(const t of tiers){
+        const p=parseFloat(row[10+t.o]);if(isNaN(p)||p<=0)continue;
+        results.push(makeRecord({supplier:SUPPLIER,country:COUNTRY,channel_name:"美转墨快线35日达",transport_mode:"海运",vessel_config:"统配",vessel_tags:["普船"],delivery_method:"卡派",destType:"warehouse",destCode:dest,destRegion:"墨西哥",billing_type:"包税",minQty:t.l,minQtyValue:t.v,unit_price:p,price_unit:"元/CBM",transitMin:33,transitMax:38,transitDesc:"35天左右",source_sheet:"墨西哥空派美转墨直航"}));
+      }
+    }
+  }
+  return results;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 加拿大空运海运 — 空运6日提/9日提 + 海运美转加
+// ═══════════════════════════════════════════════════════════════
+function parseCanadaAirSea(ws) {
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+  const results = [];
+  // R5-R8 headers, R9+ data
+  // 空运6日提普货: col4-6, 空运6日提带电: col7-9
+  const airSections = [
+    {name:"加拿大空运6日提-普货",startCol:4,tiers:[{o:0,l:"21KG+",v:21},{o:1,l:"45KG+",v:45},{o:2,l:"100KG+",v:100}],transitMin:5,transitMax:8,transitDesc:"6天提取"},
+    {name:"加拿大空运6日提-带电/敏感",startCol:7,tiers:[{o:0,l:"21KG+",v:21},{o:1,l:"45KG+",v:45},{o:2,l:"100KG+",v:100}],transitMin:6,transitMax:9,transitDesc:"7天提取"},
+  ];
+  for(let ri=9;ri<data.length;ri++){
+    const row=data[ri];const label=String(row[2]||"").trim();
+    if(!label||label.includes("商业地址")||label.includes("UPS爆仓")||label.includes("价表未覆盖")||label.includes("空运泡货"))continue;
+    if(label.includes("非FBA"))continue;
+    let whs=[];const whMatch=label.match(/[A-Z]{2,}\d/g);
+    if(whMatch)whs=whMatch;else whs=[label.slice(0,40)];
+    for(const sec of airSections){
+      for(const t of sec.tiers){
+        const p=parseFloat(row[sec.startCol+t.o]);if(isNaN(p)||p<=0||p>200)continue;
+        for(const w of whs){
+          results.push(makeRecord({supplier:SUPPLIER,country:COUNTRY,channel_name:sec.name,transport_mode:"空运",vessel_config:"空运",vessel_tags:["空运","加拿大"],delivery_method:sec.name.includes("带电")?"快递派":"快递派",destType:"warehouse",destCode:w,destRegion:"加拿大",billing_type:"包税",minQty:t.l,minQtyValue:t.v,unit_price:p,price_unit:"元/KG",transitMin:sec.transitMin,transitMax:sec.transitMax,transitDesc:sec.transitDesc,source_sheet:"加拿大空运海运"}));
+        }
+      }
+    }
+    // 海运价格可能在后面列
+    for(let col=10;col<Math.min(row.length,20);col+=2){
+      const sp=parseFloat(row[col]);if(isNaN(sp)||sp<=0||sp>200)continue;
+      const tierLabel=String(data[8]?.[col]||"100KG+").trim();
+      const mv=parseInt(tierLabel.match(/(\d+)/)?.[1]||"100");
+      for(const w of whs){
+        results.push(makeRecord({supplier:SUPPLIER,country:COUNTRY,channel_name:"加拿大海运-卡派",transport_mode:"海运",vessel_config:"统配",vessel_tags:["普船","加拿大"],delivery_method:"卡派",destType:"warehouse",destCode:w,destRegion:"加拿大",billing_type:"包税",minQty:tierLabel,minQtyValue:mv,unit_price:sp,price_unit:"元/KG",source_sheet:"加拿大空运海运"}));
+      }
+    }
+  }
+  return results;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 加拿大空运海运-超大件 — Zone × 城市 × 重量段
+// ═══════════════════════════════════════════════════════════════
+function parseCanadaOversize(ws) {
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+  const results = [];
+  // R8: tiers (100KG+,200KG+,300KG+,500KG+,1000KG+), R9+: zone data
+  const tiers=[{col:5,l:"100KG+",v:100},{col:6,l:"200KG+",v:200},{col:7,l:"300KG+",v:300},{col:8,l:"500KG+",v:500},{col:9,l:"1000KG+",v:1000}];
+  for(let ri=9;ri<data.length;ri++){
+    const row=data[ri];const zone=String(row[1]||"").trim();const prov=String(row[3]||"").trim();const cities=String(row[4]||"").trim();
+    if(!zone||!cities||zone.includes("分区"))continue;
+    const dest=cities.split(";").map(s=>s.trim()).filter(s=>s.length>1);
+    for(const t of tiers){
+      const p=parseFloat(row[t.col]);if(isNaN(p)||p<=0)continue;
+      for(const d of dest.slice(0,3)){
+        results.push(makeRecord({supplier:SUPPLIER,country:COUNTRY,channel_name:"加拿大超大件空运",transport_mode:"空运",vessel_config:"空运超大件",vessel_tags:["空运","超大件","加拿大"],delivery_method:"卡派",destType:"address",destCode:d,destRegion:prov+" "+zone,billing_type:"包税",minQty:t.l,minQtyValue:t.v,unit_price:p,price_unit:"元/KG",transitMin:8,transitMax:12,transitDesc:"10天左右到仓",source_sheet:"加拿大空运海运-超大件"}));
+      }
+    }
+  }
+  return results;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 欧英美加海运空运DG — 危险品专线
+// ═══════════════════════════════════════════════════════════════
+function parseDG(ws) {
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+  const results = [];
+  // 美国: col0=label, col1=45KG+, col2=100KG+, col3=1000KG+
+  // 加拿大: col5=label, col6=45KG+, col7=100KG+, col8=1000KG+
+  const usTiers=[{col:1,l:"45KG+",v:45},{col:2,l:"100KG+",v:100},{col:3,l:"1000KG+",v:1000}];
+  const caTiers=[{col:6,l:"45KG+",v:45},{col:7,l:"100KG+",v:100},{col:8,l:"1000KG+",v:1000}];
+  for(let ri=8;ri<data.length;ri++){
+    const row=data[ri];
+    const usLabel=String(row[0]||"").trim();const caLabel=String(row[5]||"").trim();
+    // US section - extract warehouse or label
+    if(usLabel&&!usLabel.includes("价表未覆盖")){
+      let whs=[];const whMatch=usLabel.match(/[A-Z]{2,}\d/g);if(whMatch)whs=whMatch;else whs=[usLabel.slice(0,40)];
+      for(const t of usTiers){const p=parseFloat(row[t.col]);if(isNaN(p)||p<=0)continue;
+        for(const w of whs){results.push(makeRecord({supplier:SUPPLIER,country:COUNTRY,channel_name:"美国普船DG海卡",transport_mode:"海运",vessel_config:"OA普船DG",vessel_tags:["DG","OA","危险品"],delivery_method:"卡派",destType:"warehouse",destCode:w,destRegion:"美国",billing_type:"包税",minQty:t.l,minQtyValue:t.v,unit_price:p,price_unit:"元/KG",source_sheet:"欧英美加海运空运DG"}));}
+      }
+    }
+    // Canada section - postal code area label
+    if(caLabel&&!caLabel.includes("价表未覆盖")){
+      const caWhs=[caLabel.replace(/\r?\n/g," ").trim()];
+      for(const t of caTiers){const p=parseFloat(row[t.col]);if(isNaN(p)||p<=0)continue;
+        for(const w of caWhs){results.push(makeRecord({supplier:SUPPLIER,country:COUNTRY,channel_name:"加拿大普船DG海卡",transport_mode:"海运",vessel_config:"普船DG",vessel_tags:["DG","危险品","加拿大"],delivery_method:"卡派",destType:"address",destCode:w.slice(0,50),destRegion:"加拿大",billing_type:"包税",minQty:t.l,minQtyValue:t.v,unit_price:p,price_unit:"元/KG",source_sheet:"欧英美加海运空运DG"}));}
+      }
+    }
+  }
+  return results;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TEMU-Y2专线 — 小包专线
+// ═══════════════════════════════════════════════════════════════
+function parseTEMU(ws) {
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+  const results = [];
+  // R5+: col2=国家, col3=渠道名, col5=重量段, col7=运费, col8=操作费
+  for(let ri=5;ri<data.length;ri++){
+    const row=data[ri];const country=String(row[2]||"").trim();const chName=String(row[3]||"").trim();const weight=String(row[5]||"").trim();const freight=parseFloat(row[7]);const handling=parseFloat(row[8]);
+    if(!chName||isNaN(freight)||freight<=0)continue;
+    let wv=0.45;const wm=weight.match(/([\d.]+)/);if(wm)wv=parseFloat(wm[1]);
+    const totalPrice=freight+(isNaN(handling)?0:handling);
+    results.push(makeRecord({supplier:SUPPLIER,country:COUNTRY,channel_name:chName,transport_mode:"空运",vessel_config:"TEMU小包",vessel_tags:["TEMU","小包"],delivery_method:"快递派",destType:"warehouse",destCode:"TEMU-Y2",destRegion:country||"美国",billing_type:"包税",minQty:weight,minQtyValue:wv,unit_price:totalPrice,price_unit:"元/票",transitMin:5,transitMax:9,transitDesc:"5-9个工作日",source_sheet:"TEMU-Y2专线"}));
+  }
+  return results;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // 主入口
 // ═══════════════════════════════════════════════════════════════
 
@@ -920,6 +1123,13 @@ function parseHaopeng(filePath) {
     "美西美东商私卡": parseCommercialCard,
     "美国空运": parseAirFreight,
     "美国空运小货特快": parseAirFreight,
+    "巴西海运": parseBrazilSea,
+    "澳大利亚空运海运": parseAustraliaAirSea,
+    "墨西哥空派美转墨直航": parseMexicoAirSea,
+    "加拿大空运海运": parseCanadaAirSea,
+    "加拿大空运海运-超大件": parseCanadaOversize,
+    "欧英美加海运空运DG": parseDG,
+    "TEMU-Y2专线": parseTEMU,
   };
 
   // 英国 Sheet（名称含尾部空格，模糊匹配）
