@@ -628,6 +628,279 @@ function parseSimpleRegionSheet(ws, sheetName, defaultRegion, weightTiers, cbmCo
 }
 
 // ═══════════════════════════════════════════════════════════════
+// 多国通用解析器（英国 / 欧洲 / 加拿大）
+// ═══════════════════════════════════════════════════════════════
+
+/** 从超大件 Sheet 提取渠道组配置（邮编×渠道×重量阶梯 模式） */
+function parseOversizePostalMatrix(ws, config) {
+  // config: { dataStartRow, postalCol, channels: [{name, startCol, numTiers, weightLabels, weightValues, transportMode}] }
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+  if (data.length < config.dataStartRow) return [];
+  const results = [];
+
+  for (let ri = config.dataStartRow - 1; ri < data.length; ri++) {
+    const row = data[ri];
+    const postalRaw = String(row[config.postalCol] || "").trim();
+    if (!postalRaw || postalRaw.length < 2) continue;
+    if (postalRaw.includes("渠道说明") || postalRaw.includes("邮编") || postalRaw.includes("超大件")) continue;
+    // Skip header/metadata rows
+    if (postalRaw.includes("注意事项") || postalRaw.includes("返回目录")) continue;
+
+    for (const ch of config.channels) {
+      for (let t = 0; t < ch.numTiers; t++) {
+        const price = parseFloat(row[ch.startCol + t]);
+        if (!isNaN(price) && price > 0) {
+          results.push(makeRecord({
+            channelName: ch.name,
+            transportMode: ch.transportMode || "空运",
+            vesselConfig: ch.vesselConfig || ch.name,
+            vesselTags: ch.vesselTags || [],
+            deliveryMethod: ch.deliveryMethod || "卡派",
+            destCode: postalRaw.slice(0, 50),
+            destType: "postal",
+            destRegion: config.destRegion || "",
+            billingType: "包税",
+            minQty: (ch.weightLabels || [])[t] || `${(ch.weightValues || [])[t] || 0}KG+`,
+            minQtyValue: (ch.weightValues || [])[t] || 0,
+            price,
+            price_unit: "元/KG",
+            sourceSheet: config.sourceSheet || "",
+          }));
+        }
+      }
+    }
+  }
+  return results;
+}
+
+/** 英国超大件 (邮编 × 空运普货/空运带电/卡航) */
+function parseUKOversize(ws) {
+  return parseOversizePostalMatrix(ws, {
+    dataStartRow: 10,
+    postalCol: 2,
+    destRegion: "英国",
+    sourceSheet: "英国超大件",
+    channels: [
+      { name: "英国超大件-空运普货", startCol: 3, numTiers: 4, transportMode: "空运",
+        weightLabels: ["45KG+","100KG+","300KG+","500KG+"], weightValues: [45,100,300,500],
+        vesselConfig: "空运", vesselTags: ["空运"], deliveryMethod: "卡派" },
+      { name: "英国超大件-空运带电", startCol: 7, numTiers: 4, transportMode: "空运",
+        weightLabels: ["45KG+","100KG+","300KG+","500KG+"], weightValues: [45,100,300,500],
+        vesselConfig: "空运", vesselTags: ["空运","带电"], deliveryMethod: "卡派" },
+      { name: "英国超大件-卡航", startCol: 11, numTiers: 4, transportMode: "卡航",
+        weightLabels: ["45KG+","100KG+","300KG+","500KG+"], weightValues: [45,100,300,500],
+        vesselConfig: "卡航", vesselTags: ["卡航"], deliveryMethod: "卡派" },
+    ],
+  });
+}
+
+/** 欧洲超大件 (国家 × 邮编 × 空派普货/空派带电/卡航) */
+function parseEUOversize(ws) {
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+  if (data.length < 10) return [];
+  const results = [];
+
+  // 渠道: col3-7=空派普货(68,100,300,500,1000), col8-12=空派带电, col13-14=卡航
+  const channels = [
+    { name: "欧洲超大件-空派普货", startCol: 3, numTiers: 5, transportMode: "空运",
+      weightLabels: ["68KG","100KG","300KG+","500KG+","1000KG+"], weightValues: [68,100,300,500,1000],
+      vesselConfig: "空运", vesselTags: ["空运"], deliveryMethod: "快递派" },
+    { name: "欧洲超大件-空派带电", startCol: 8, numTiers: 5, transportMode: "空运",
+      weightLabels: ["68KG","100KG","300KG+","500KG+","1000KG+"], weightValues: [68,100,300,500,1000],
+      vesselConfig: "空运", vesselTags: ["空运","带电"], deliveryMethod: "快递派" },
+    { name: "欧洲超大件-卡航", startCol: 13, numTiers: 2, transportMode: "卡航",
+      weightLabels: ["68KG","100KG"], weightValues: [68,100],
+      vesselConfig: "卡航", vesselTags: ["卡航"], deliveryMethod: "快递派" },
+  ];
+
+  let currentCountry = "";
+  for (let ri = 9; ri < data.length; ri++) {
+    const row = data[ri];
+    const countryCell = String(row[1] || "").trim();
+    const postalRaw = String(row[2] || "").trim();
+
+    if (countryCell && countryCell.length >= 2 && !countryCell.match(/^\d/)) {
+      currentCountry = countryCell;
+    }
+    if (!postalRaw || postalRaw.length < 2) continue;
+    if (postalRaw.includes("渠道说明") || postalRaw.includes("国家")) continue;
+
+    for (const ch of channels) {
+      for (let t = 0; t < ch.numTiers; t++) {
+        const price = parseFloat(row[ch.startCol + t]);
+        if (!isNaN(price) && price > 0) {
+          results.push(makeRecord({
+            country: detectCountry(currentCountry) || "欧线",
+            channelName: `${ch.name}(${currentCountry})`,
+            transportMode: ch.transportMode,
+            vesselConfig: ch.vesselConfig,
+            vesselTags: ch.vesselTags,
+            deliveryMethod: ch.deliveryMethod,
+            destCode: `${currentCountry}_${postalRaw.slice(0, 30)}`,
+            destType: "postal",
+            destRegion: currentCountry,
+            billingType: "包税",
+            minQty: ch.weightLabels[t],
+            minQtyValue: ch.weightValues[t],
+            price,
+            price_unit: "元/KG",
+            sourceSheet: "欧洲超大件",
+          }));
+        }
+      }
+    }
+  }
+  return results;
+}
+
+/** 英国常规 (非超大件: 空运/卡航/铁路/海运) */
+function parseUKAirSeaRail(ws) {
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+  if (data.length < 9) return [];
+  const results = [];
+
+  // 这个 Sheet 有多个渠道组，每组有独立重量阶梯
+  // 基本模式: col0=送达方式, col1=税务类型, 后续按渠道组排列
+  const channelGroups = [
+    // DPD派 - 空运5日提普货: cols 2-5 (21/45/100/1000)
+    { name: "英国空运5日提普货-DPD", startCol: 2, numTiers: 4, transportMode: "空运",
+      weightLabels: ["21KG+","45KG+","100KG+","1000KG+"], weightValues: [21,45,100,1000],
+      vesselConfig: "空运5日提", vesselTags: ["空运"], deliveryMethod: "快递派" },
+    // 空运5日提带电: cols 6-9
+    { name: "英国空运5日提带电-DPD", startCol: 6, numTiers: 4, transportMode: "空运",
+      weightLabels: ["21KG+","45KG+","100KG+","1000KG+"], weightValues: [21,45,100,1000],
+      vesselConfig: "空运5日提", vesselTags: ["空运","带电"], deliveryMethod: "快递派" },
+    // 空运9日提普货: cols 10-11
+    { name: "英国空运9日提普货-DPD", startCol: 10, numTiers: 2, transportMode: "空运",
+      weightLabels: ["21KG+","45KG+"], weightValues: [21,45],
+      vesselConfig: "空运9日提", vesselTags: ["空运"], deliveryMethod: "快递派" },
+  ];
+
+  // 遍历数据行
+  for (let ri = 8; ri < data.length; ri++) {
+    const row = data[ri];
+    const col0 = String(row[0] || "").trim();
+    const col1 = String(row[1] || "").trim();
+
+    // 跳过空行和章节标题
+    if (!col0 && !col1) continue;
+    if (col0.includes("渠道说明") || col0.includes("空运") || col0.includes("临时")) continue;
+
+    const destLabel = (col0 + "\n" + col1).trim();
+    for (const ch of channelGroups) {
+      for (let t = 0; t < ch.numTiers; t++) {
+        const price = parseFloat(row[ch.startCol + t]);
+        if (!isNaN(price) && price > 0 && price < 999) {
+          results.push(makeRecord({
+            country: "英国",
+            channelName: ch.name,
+            transportMode: ch.transportMode,
+            vesselConfig: ch.vesselConfig,
+            vesselTags: ch.vesselTags,
+            deliveryMethod: ch.deliveryMethod,
+            destCode: destLabel.slice(0, 60),
+            destType: "region",
+            destRegion: "英国",
+            billingType: destLabel.includes("包税") ? "包税" : destLabel.includes("递延") ? "递延" : "自税",
+            minQty: ch.weightLabels[t],
+            minQtyValue: ch.weightValues[t],
+            price,
+            price_unit: "元/KG",
+            sourceSheet: "英国空运海运铁路卡航",
+          }));
+        }
+      }
+    }
+  }
+  return results;
+}
+
+/** 欧洲常规 (非超大件: 仓库×渠道) */
+function parseEUAirSeaRail(ws) {
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+  if (data.length < 9) return [];
+  const results = [];
+
+  // 渠道: col2-4=空运6日提普货(21/45/100), col5-7=空运6日提带电, col8-10=空运9日提普货, col11-13=空运9日提带电
+  const channels = [
+    { name: "欧洲空运6日提普货", startCol: 2, numTiers: 3, transportMode: "空运",
+      weightLabels: ["21KG+","45KG+","100KG+"], weightValues: [21,45,100],
+      vesselConfig: "空运6日提", vesselTags: ["空运"], deliveryMethod: "快递派" },
+    { name: "欧洲空运6日提带电", startCol: 5, numTiers: 3, transportMode: "空运",
+      weightLabels: ["21KG+","45KG+","100KG+"], weightValues: [21,45,100],
+      vesselConfig: "空运6日提", vesselTags: ["空运","带电"], deliveryMethod: "快递派" },
+    { name: "欧洲空运9日提普货", startCol: 8, numTiers: 3, transportMode: "空运",
+      weightLabels: ["21KG+","45KG+","100KG+"], weightValues: [21,45,100],
+      vesselConfig: "空运9日提", vesselTags: ["空运"], deliveryMethod: "快递派" },
+    { name: "欧洲空运9日提带电", startCol: 11, numTiers: 3, transportMode: "空运",
+      weightLabels: ["21KG+","45KG+","100KG+"], weightValues: [21,45,100],
+      vesselConfig: "空运9日提", vesselTags: ["空运","带电"], deliveryMethod: "快递派" },
+  ];
+
+  for (let ri = 8; ri < data.length; ri++) {
+    const row = data[ri];
+    const col0 = String(row[0] || "").trim(); // country
+    const col1 = String(row[1] || "").trim(); // warehouse info
+
+    if (!col0 && !col1) continue;
+    if (col0.includes("渠道说明") || col0.includes("国家")) continue;
+
+    // Extract warehouse code: look for patterns like "38350-HAJ1" or "HAJ1"
+    const whMatch = (col0 + " " + col1).match(/([A-Z]{3,4}\d|[A-Z]{2,3}\d{1,2}[A-Z]?)/g);
+    const whCodes = whMatch ? [...new Set(whMatch)] : [];
+    const destLabel = (col0 + " " + col1).replace(/\n/g, " ").trim().slice(0, 100);
+
+    for (const ch of channels) {
+      for (let t = 0; t < ch.numTiers; t++) {
+        const price = parseFloat(row[ch.startCol + t]);
+        if (!isNaN(price) && price > 0 && price < 999) {
+          if (whCodes.length > 0) {
+            for (const wh of whCodes) {
+              results.push(makeRecord({
+                country: "欧线",
+                channelName: ch.name,
+                transportMode: ch.transportMode,
+                vesselConfig: ch.vesselConfig,
+                vesselTags: ch.vesselTags,
+                deliveryMethod: ch.deliveryMethod,
+                destCode: wh,
+                destType: "warehouse",
+                destRegion: "欧线",
+                billingType: "包税",
+                minQty: ch.weightLabels[t],
+                minQtyValue: ch.weightValues[t],
+                price,
+                price_unit: "元/KG",
+                sourceSheet: "欧洲空运海运铁路卡航",
+              }));
+            }
+          } else {
+            results.push(makeRecord({
+              country: "欧线",
+              channelName: ch.name,
+              transportMode: ch.transportMode,
+              vesselConfig: ch.vesselConfig,
+              vesselTags: ch.vesselTags,
+              deliveryMethod: ch.deliveryMethod,
+              destCode: destLabel.slice(0, 60),
+              destType: "region",
+              destRegion: "欧线",
+              billingType: "包税",
+              minQty: ch.weightLabels[t],
+              minQtyValue: ch.weightValues[t],
+              price,
+              price_unit: "元/KG",
+              sourceSheet: "欧洲空运海运铁路卡航",
+            }));
+          }
+        }
+      }
+    }
+  }
+  return results;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // 主入口
 // ═══════════════════════════════════════════════════════════════
 
@@ -648,6 +921,18 @@ function parseHaopeng(filePath) {
     "美国空运": parseAirFreight,
     "美国空运小货特快": parseAirFreight,
   };
+
+  // 英国 Sheet（名称含尾部空格，模糊匹配）
+  const ukOversizeName = wb.SheetNames.find(n => n.includes("英国") && n.includes("超大件"));
+  const ukNormalName = wb.SheetNames.find(n => n.trim() === "英国空运海运铁路卡航");
+  // 欧洲 Sheet
+  const euOversizeName = wb.SheetNames.find(n => n.includes("欧洲") && n.includes("超大件") && n.includes("铁路卡航"));
+  const euNormalName = wb.SheetNames.find(n => n.trim() === "欧洲空运海运铁路卡航");
+
+  if (ukOversizeName) sheetParsers[ukOversizeName] = parseUKOversize;
+  if (ukNormalName) sheetParsers[ukNormalName] = parseUKAirSeaRail;
+  if (euOversizeName) sheetParsers[euOversizeName] = parseEUOversize;
+  if (euNormalName) sheetParsers[euNormalName] = parseEUAirSeaRail;
 
   // Handle NY sheet with possible trailing space
   const nySheetName = wb.SheetNames.find(n => n.includes("美东纽约OA非OA海卡"));
