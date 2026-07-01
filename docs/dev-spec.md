@@ -587,63 +587,197 @@ node parsers/query.js -d ONT8 -t 10 --export csv
 
 ---
 
-## 6. 已知坑 / 绕过的 Hack / 待重构项
+## 6. 已知坑 / 绕过的 Hack / 临时决策 / 留后事项
 
-### 已知坑
+> **说明**: 本节按"设计级（架构决策）→ 实现级（绕过方案）→ 留后（待修复）"分层记录。
 
-1. **`makeRecord` 的 `minQty` 参数名陷阱** ★★★
-   - 解析器中 `makeRecord({ minQty: t.label })` → 内部映射为 `min_quantity`
-   - 如果误写为 `min_quantity: t.label`，参数直接进入 undefined path，默认为 `""` → 所有记录 min_quantity 相同 → 去重碰撞 → 大量记录丢失
-   - **历史事故**: 皓鹏新增巴西/澳洲/加拿大/DG/TEMU 解析器时全部写错，导致 287 条记录被错误去重，后通过 `sed` 修复 13 处
+---
 
-2. **CommonJS vs ES Module 混杂**
-   - 解析器全部使用 `require/module.exports`（CommonJS）
-   - Next.js App Router 使用 ES Module (`import/export`)
-   - **结果**: 解析器只能通过 `node` 直接运行，不能从 Next.js 代码中 import
-   - `build_db.js` 在 `npm run build` 时独立执行（`node parsers/build_db.js`），不在 Next.js 构建流程中
+### 6.1 设计级 — 架构决策与约定
 
-3. **DG Sheet 国家覆盖 Bug**
-   - Sheet "欧英美加海运空运DG" 的 `detectCountry` 返回 "美国"（因为含"美"字）
-   - 导致 DG 中加拿大/英国/欧洲的记录 `country` 被错误覆盖为 "美国"
-   - **影响范围**: ~8 条 DG 加拿大记录 → 当前未修复
+#### 6.1.1 美森(Matson) 船司命名规范 ★
 
-4. **`detectCountry` 优先级问题**
-   - 关键词列表中"美森"触发"美国"匹配，因为含"美"字
-   - 如果 Sheet 名同时含美国和加拿大关键词，`detectCountry` 返回第一个匹配（美国优先）
-   - 部分解析器（如 haopeng、meiqi）在循环中手动覆盖 `country` 字段来绕过
+- **约定**: CLX = 美森正班船, MAX = 美森加班船, 美森 = MATSON
+- **格式**: `"美森MATSON CLX(正班)"` / `"美森MATSON MAX(加班)"` / `"美森MATSON 统配"`
+- **影响范围**: meiqi, yingmei, tiantu, haohui, haopeng 等所有美线解析器均已统一
+- **风险**: 新增美线供应商时必须遵循此命名，否则船司搜索匹配不一致
 
-5. **港口/仓库名称歧义**
-   - "奥克兰" 同时是美国和新西兰城市 → `country-detector.js` 未包含此关键词
-   - "温哥华" 在美国和加拿大都有 → 已正确处理为加拿大
+#### 6.1.2 国家值必须使用 `country-detector.js` 的返回值 ★
 
-6. **Excel 临时文件干扰**
-   - `~$` 开头的 Office 临时文件会被 `readdirSync` 捕获
-   - `build_db.js` 已过滤 `!f.startsWith("~$")`，但如果新解析器自己实现文件扫描需注意
+- `country-detector.js` 是唯一国家值权威来源: `美国/英国/欧线/加拿大/墨西哥/巴西/澳大利亚/日本`
+- **历史事故**: 6 个解析器内部硬编码 `"欧洲"` 而非 `"欧线"` → 前端欧线 Tab 精确匹配失败 → 欧洲线路除皓鹏外的所有供应商查不到数据
+- **修复**: 解析器统一改为 `"欧线"` + API 层归一化 `"欧洲"` ↔ `"欧线"` 互查（`route.ts` line 115-121）
+- **教训**: 新增解析器禁止 hardcode 国家字符串，必须通过 `detectCountry()` 或使用 `country-detector.js` 的 `COUNTRY_PATTERNS` 中定义的值
 
-7. **34MB JSON 全量加载**
-   - Web 服务每次启动/缓存失效时加载 34MB JSON → ~500ms 解析时间
-   - Node.js 内存占用增加 ~100MB
-   - **缓解**: `price-store.ts` 内存缓存 + 启动时一次性加载
+#### 6.1.3 "美转加" = 加拿大线路
 
-8. **xlsx 库的日期单元格**
-   - SheetJS 将 Excel 日期转为数字（自 1900-01-01 的天数），需要手动转换
-   - 部分解析器需处理日期格式的生效日期列
+- 多个供应商（天图、英美、美琦、ETTON）使用"美转加"表示美国→加拿大转运
+- Sheet 名含"美转加" → `country = "加拿大"`
+- 各解析器需在 Sheet 遍历循环中手动覆盖
 
-9. **`$` 临时 Excel 文件**
-   - excels/ 目录中可能有 `~$` 开头的 Office 锁定文件
-   - `build_db.js` 第 60 行正确过滤了这些文件
+#### 6.1.4 天图 UK Sheet 委托机制
 
-### 待重构项
+- `tiantu_us.js` 检测到 UK sheet 时自动 `require("./tiantu_uk")` 委托解析
+- **代价**: `tiantu_uk` 的统计在 `build_db.js` 始终为 0（因为天图 UK+US 合并文件被识别为 `tiantu`），实际 UK 记录归入 `tiantu`
+- **风险**: 如果天图单独提供纯 UK 文件（文件名不含"美"但含"英国"），`build_db.js` 识别为 `tiantu_uk` → 调用 `parseTiantuUK()` → 但 `tiantu_uk.js` 不处理文件中的 US sheets → US 数据丢失
+
+#### 6.1.5 CommonJS vs ES Module 隔离
+
+- 解析器全部使用 `require/module.exports`（CommonJS）
+- Next.js App Router 使用 ES Module (`import/export`)
+- **结果**: 解析器只能通过 `node` 直接运行，不能从 Next.js 代码中 import
+- `build_db.js` 在 `npm run build` 时独立执行（`node parsers/build_db.js`），不在 Next.js 构建流程中
+- **风险**: 如果未来想在 Next.js API route 中动态调用解析器（如上传 Excel 实时解析），需要重构模块格式
+
+---
+
+### 6.2 实现级 — 绕过方案与 Hack
+
+#### 6.2.1 `makeRecord` 的 `minQty` 参数名陷阱 ★★★
+
+- `makeRecord({ minQty: t.label })` → 内部映射为 `min_quantity`
+- 如果误写为 `min_quantity: t.label`，参数直接进入 undefined path → 默认 `""` → 所有记录 `min_quantity` 相同 → 去重碰撞 → 大量记录丢失
+- **历史事故**: 皓鹏新增巴西/澳洲/加拿大/DG/TEMU 解析器时 13 处全部写错 → 287 条记录被错误去重 → 用 `sed` 批量修复
+- **预防**: 新增解析器写完后必须检查 `build_db` 输出的记录数与预期是否一致
+
+#### 6.2.2 `detectCountry` 关键词歧义
+
+- "美森" 含 "美" → 触发美国匹配
+- "欧英美加海运空运DG" 含 "美" → 返回 "美国"（实际是跨国 DG sheet）
+- **绕过**: 在 haopeng DG 循环中手动 `country = "美国"` 覆盖（但加拿大 DG 记录也被错误覆盖为美国 → 未修复）
+- **绕过**: 在美琦 `parseUSToMexico` 中检测到"美转墨"关键词时手动覆盖 `country = "墨西哥"`
+
+#### 6.2.3 美琦 parseUSToMexico 列偏移自动检测
+
+- 美转墨"普线"/"敏感货" Sheet 的 col0 可能为空（标题在 col1）
+- **绕过**: 自动检测: 如果首行 `col0` 为空且 `col1` 含"美转墨/普线/敏感货" → `colOffset=1`
+- **风险**: 这是脆弱的启发式，如果格式变化可能返回 0 条
+
+#### 6.2.4 ETTON 加/澳 Sheet 启发式列检测
+
+- ETTON CA/AU 文件与 US 格式完全不同（无 4 固定区域）
+- **绕过**: 扫描 R1-R2 找渠道名 → R3 找城市组 → R4-R5 找重量梯度
+- **风险**: 完全依赖特定 Excel 排版，ETTON 改版可能导致解析 0 条且无报错
+
+#### 6.2.5 皓鹏 `COUNTRY` 常量未定义
+
+- haopeng_us.js 前半部分（美线函数）使用 `const COUNTRY = "美国"`，但新增的后半部分（巴西/澳洲/加拿大等）函数在文件末尾才定义，引用了一个不存在的 `COUNTRY`
+- **修复**: 在文件顶部添加 `const COUNTRY = "美国";`
+- **教训**: 大文件内函数拆分时，确认每个新函数引用的变量/常量在作用域内
+
+#### 6.2.6 `CITY_TO_ORIGIN` 映射表不完整
+
+- 仅 ETTON、天图、英美 三家有完整的城市→起运区域映射
+- 其他供应商降级为简单字符串包含匹配 → 可能误匹配或漏匹配
+- **影响**: 用户在非主流城市查价时可能看不到某些供应商的价格
+- **留后**: 新增供应商时需评估是否添加映射
+
+#### 6.2.7 `supplierMap` 和 `ALL_SUPPLIERS` 需手动同步
+
+- `route.ts` 的 `supplierMap` (API 层) 和 `page.tsx` 的 `ALL_SUPPLIERS` (UI 层) 是两处独立维护
+- **历史事故**: 凯鑫、新胜、丰运、华威尔、美琦 5 家供应商添加了解析器但未同步更新 supplierMap → 前端查不到
+- **约定**: 新增供应商后必须同时更新: (1) build_db.js 识别规则 (2) route.ts supplierMap (3) page.tsx ALL_SUPPLIERS + supplierBadge (4) page.tsx LINE_CONFIG.supplierDesc
+
+#### 6.2.8 `makeRecord` 浮点数精度
+
+- 部分解析器价格出现 `5.199999999999998` 而非 `5.20`
+- 原因: JavaScript 浮点运算 + Excel 单元格可能是公式计算结果
+- **影响**: 仅分位级误差，不影响排序，但 CSV 导出时显式不精确
+- **留后**: 统一在 `mkr()` 中 `Math.round(price * 100) / 100`
+
+#### 6.2.9 新胜两文件合并（深圳+义乌）
+
+- 深圳新胜和义乌新胜内容高度相似但 Sheet 名/结构略有不同
+- **决策**: 同一个 `parseGenericSheet()` 自动适应 → 通过 `parseSimpleSheet()` 兜底
+- **风险**: 两文件同渠道+同仓+同梯度的记录会去重（保留先解析的那条），如果两文件价差很大，后解析的更优价会丢失
+
+---
+
+### 6.3 留后事项 — 已知未修复 / 等待条件
+
+#### 6.3.1 DG Sheet 国家覆盖 Bug ★
+
+- Sheet "欧英美加海运空运DG" 的 `detectCountry` 返回 "美国"（含"美"）
+- 导致加拿大/英国/欧洲 DG 记录被错误标为美国
+- **影响**: ~8 条加拿大 DG 记录
+- **修复方案**: 在 haopeng DG 循环中用 per-section country 覆盖，或在 `detectCountry` 中加 DG 特殊逻辑
+- **状态**: 未修复（影响小，等下次改版时统一处理）
+
+#### 6.3.2 英美跨境空派文件解析 0 条
+
+- `build_db` 输出显示英美空派文件 `总计解析 0 条`
+- **原因**: 英美空派文件格式与海派不同，`yingmei_us.js` 未处理空派 Sheet
+- **影响**: 英美空运价格全部缺失
+- **状态**: 未修复（需要获取文件样本分析格式）
+
+#### 6.3.3 星链澳洲线跳过
+
+- `xinglian_us.js` 中 "澳洲FBA-海运" Sheet 标记为跳过
+- **原因**: 格式不同于美线，需要独立解析函数
+- **状态**: 未实现
+
+#### 6.3.4 皓鹏墨西哥"渠道暂停"
+
+- 墨西哥空派美转墨直航 sheet 所有价格显示"渠道暂停"
+- 解析器正确返回 0 条
+- **风险**: 供应商恢复服务后不会自动通知 → 需定期检查
+
+#### 6.3.5 皓鹏欧洲超大件"单询"
+
+- 欧洲空运海运-超大件价格为"单询"（需人工询价）
+- 解析器正确跳过（非标准定价）
+- **风险**: 供应商改为标准定价后解析器可能不识别
+
+#### 6.3.6 罗马尼亚海外仓 = 仓储服务费
+
+- 凯鑫 Romania sheet 是仓储服务费报价，非物流价格
+- 解析器正确跳过
+- **注意**: 其他供应商（如新胜）也可能有类似非物流 sheet，需逐个评估
+
+#### 6.3.7 Excel 日期单元格 → 数字转换
+
+- SheetJS 将日期转为自 1900-01-01 的天数（数字）
+- 部分解析器的生效日期单元格需要手动转换
+- **影响**: 如果供应商把"生效日期"放在价格带旁边 → 被误解析为价格
+
+#### 6.3.8 34MB JSON 全量加载
+
+- 启动/缓存失效时加载 34MB → ~500ms + ~100MB 内存
+- **缓解**: `price-store.ts` 内存缓存
+- **留后**: 按国家分片 / 使用 SQLite / 压缩传输
+
+#### 6.3.9 上传 API 未实现
+
+- 页面 (line 275) 调用 `POST /api/price-query/upload`
+- `route.ts` 只有 GET handler，无 POST/UPLOAD handler
+- **状态**: 页面 UI 已就绪，后端未实现
+
+#### 6.3.10 Sealos 需手动重新部署
+
+- CI 推镜像到 GHCR 后，不会自动触发 Sealos 更新
+- 需手动在 Sealos 控制台操作
+- **留后**: 可考虑 Sealos webhook 或 kubectl rollout restart
+
+#### 6.3.11 端口抢占 (开发环境)
+
+- Windows 下 `npx next dev` 旧进程可能未退出导致 `EADDRINUSE`
+- **解决**: `netstat -ano | grep :3001` → `taskkill //PID xxx`
+
+---
+
+### 6.4 待重构项
 
 - [ ] **实现 `POST /api/price-query/upload`**: 页面已有 UI，API 路由未实现
 - [ ] **将 34MB JSON 拆分为按国家分片**: 减少单次加载量，支持按需加载
-- [ ] **修复 DG Sheet 国家覆盖**: 在 haopeng 解析器的 DG 循环中使用 per-sheet country override
+- [ ] **修复 DG Sheet 国家覆盖**: 在 haopeng 解析器的 DG 循环中使用 per-section country override
 - [ ] **统一解析器模块格式**: 全部迁移到 ES Module 或全部保持 CommonJS（当前混用）
-- [ ] **提取通用解析器**: `parseGroupedSheet`/`parseGenericSheet` 等模式出现在多个解析器中，应提取为共享模块
-- [ ] **添加解析器测试**: 至少对 `makeRecord`/`mkr` 输出格式做快照测试
-- [ ] **供应商元数据动态化**: 当前 supplier color/name 映射硬编码在页面中
-- [ ] **支持 `detectCountry` 多国家返回**: 当前一个 Sheet 只能返回一个国家，DG 类 Sheet 需要支持多国家
+- [ ] **提取通用解析器为共享模块**: `parseGroupedSheet`/`parseGenericSheet` 等模式出现在 kaixin/xinsheng/hangle/fengyun 等解析器中 → 提取为 `parsers/shared/`
+- [ ] **添加解析器测试**: 至少对 `makeRecord`/`mkr` 输出格式做快照测试 + 已知 Excel 文件的解析条数回归测试
+- [ ] **供应商元数据动态化**: supplier color/name 映射硬编码在 page.tsx 中 → 改为从 API meta 端点获取
+- [ ] **支持 `detectCountry` 多国家返回**: DG/跨国类 Sheet 需要返回国家数组而非单个字符串
 - [ ] **日本线路数据**: `country-detector.js` 已定义日本关键词，但无日本价格数据
+- [ ] **`CITY_TO_ORIGIN` 补全**: 为更多供应商添加城市→区域映射
+- [ ] **英美空派解析器**: 补充 yingmei_us.js 的空派 Sheet 支持
 
 ---
 
