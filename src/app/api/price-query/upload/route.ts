@@ -57,6 +57,17 @@ const PARSER_REGISTRY: Record<string, { file: string; exportName: string }> = {
   xinsheng:   { file: "xinsheng.js",    exportName: "parseXinsheng" },
 };
 
+/** 多线路供应商：同一 Excel 可能包含多个国家的 Sheet，需依次尝试所有子解析器 */
+const SUPPLIER_PARSER_GROUP: Record<string, string[]> = {
+  tiantu: ["tiantu", "tiantu_uk", "tiantu_air"],
+};
+
+/** 根据识别出的供应商 key 返回需要尝试的全部解析器 */
+function getParserKeys(supplier: string): string[] {
+  const base = supplier.replace(/_(uk|air|us)$/, "");
+  return SUPPLIER_PARSER_GROUP[base] || [supplier];
+}
+
 function parseWithNode(filePath: string, supplier: string): PriceEntry[] {
   const fileName = path.basename(filePath);
 
@@ -74,21 +85,6 @@ function parseWithNode(filePath: string, supplier: string): PriceEntry[] {
     supplier = identified;
   }
 
-  // 加载对应解析器
-  const parsersDir = path.join(process.cwd(), "parsers");
-  const entry = PARSER_REGISTRY[supplier];
-  if (!entry) {
-    throw new Error(`未知供应商: ${supplier}`);
-  }
-
-  const mod = nodeRequire(path.join(parsersDir, entry.file));
-  const parseFn = mod[entry.exportName];
-  if (typeof parseFn !== "function") {
-    throw new Error(`解析器 ${entry.file} 未导出 ${entry.exportName}`);
-  }
-
-  const results: PriceEntry[] = parseFn(filePath);
-
   // 提取生效日期
   let effectiveDate = "";
   const dm1 = fileName.match(/(\d{4})[年.-]?(\d{1,2})[月.-]?(\d{1,2})/);
@@ -101,13 +97,49 @@ function parseWithNode(filePath: string, supplier: string): PriceEntry[] {
     }
   }
 
-  // 设置源文件和生效日期
-  for (const r of results) {
-    r.source_file = fileName;
-    r.effective_date = effectiveDate;
+  // 多线路供应商：依次尝试所有子解析器，各取对应 Sheet 的数据
+  const parsersDir = path.join(process.cwd(), "parsers");
+  const parserKeys = getParserKeys(supplier);
+  const allResults: PriceEntry[] = [];
+  const parsedLines: string[] = [];
+
+  for (const key of parserKeys) {
+    const entry = PARSER_REGISTRY[key];
+    if (!entry) continue;
+
+    try {
+      const mod = nodeRequire(path.join(parsersDir, entry.file));
+      const parseFn = mod[entry.exportName];
+      if (typeof parseFn !== "function") {
+        console.warn(`[upload] ⚠ ${entry.file} 未导出 ${entry.exportName}，跳过`);
+        continue;
+      }
+
+      const results: PriceEntry[] = parseFn(filePath);
+      if (results.length > 0) {
+        // 标记数据来源文件和生效日期
+        for (const r of results) {
+          r.source_file = fileName;
+          r.effective_date = effectiveDate;
+        }
+        allResults.push(...results);
+        parsedLines.push(`${key}(${results.length}条)`);
+        console.log(`[upload]   ✅ ${key}: ${results.length} 条`);
+      }
+    } catch (err) {
+      // 某个子解析器失败不影响其他解析器（该线路可能不存在于此文件）
+      console.log(`[upload]   ⏭ ${key}: 无匹配数据 (${(err as Error).message.slice(0, 60)})`);
+    }
   }
 
-  return results;
+  if (allResults.length === 0) {
+    throw new Error(
+      `文件 "${fileName}" 未能解析出任何价格数据。尝试的解析器: ${parserKeys.join(", ")}`
+    );
+  }
+
+  console.log(`[upload] 📊 总计: ${allResults.length} 条 (线路: ${parsedLines.join(" + ")})`);
+  return allResults;
 }
 
 export async function POST(request: NextRequest) {
