@@ -160,7 +160,7 @@ function parseEUAir(ws) {
       for (const t of tiers) {
         const p = parseFloat(row[t.c]);
         if (!isNaN(p) && p > 0) {
-          results.push(mkr({ c: "欧洲", cn: "欧洲空派-普货包税P1快线", tm: "空运", vc: "空运", vt: ["空运"],
+          results.push(mkr({ c: "欧线", cn: "欧洲空派-普货包税P1快线", tm: "空运", vc: "空运", vt: ["空运"],
             dm: "快递派", dc: cn, dt: "country", dr: cn, bt: "包税",
             mq: t.q, mv: t.v, p, tn: td.min, tx2: td.max, td: td.desc, ss: "欧洲空派普货" }));
         }

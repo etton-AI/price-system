@@ -13,7 +13,7 @@
 const XLSX = require("xlsx");
 
 const SUPPLIER = "心一供应链";
-const COUNTRY = "欧洲";
+const COUNTRY = "欧线";
 
 // ── 国家组拆分 ──
 const COUNTRY_NAMES = ["德国", "法国", "意大利", "西班牙", "波兰", "捷克", "荷兰", "奥地利",

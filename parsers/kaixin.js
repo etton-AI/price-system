@@ -9,7 +9,7 @@ const EU_COUNTRIES = ["德国","法国","意大利","西班牙","波兰","捷克
 
 function mkr(o) {
   return {
-    supplier: SUPPLIER, country: o.c || "欧洲", channel_name: o.cn || "", transport_mode: o.tm || "铁路",
+    supplier: SUPPLIER, country: o.c || "欧线", channel_name: o.cn || "", transport_mode: o.tm || "铁路",
     vessel_config: o.vc || "", vessel_tags: o.vt || [], delivery_method: o.dm || "卡派",
     destination_type: o.dt || "warehouse", destination_code: o.dc || "", destination_region: o.dr || "",
     origin_region: "华南", origin_cities: ["深圳","东莞","广州","中山"],
@@ -30,11 +30,11 @@ function parseGroupedSheet(ws, sheetName, defaults) {
   const results = [];
 
   // Determine country from sheet name
-  let country = defaults.country || "欧洲";
+  let country = defaults.country || "欧线";
   if (sheetName.includes("英国")) country = "英国";
   if (sheetName.includes("加拿大")) country = "加拿大";
   if (sheetName.includes("美国")) country = "美国";
-  if (sheetName.includes("罗马尼亚")) country = "欧洲";
+  if (sheetName.includes("罗马尼亚")) country = "欧线";
 
   // Determine transport mode
   let tm = defaults.tm || "铁路";

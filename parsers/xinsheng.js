@@ -64,7 +64,7 @@ function parseGenericSheet(ws, sheetName, defaults) {
   // Infer country from sheet name
   let country = defaults.country || "英国";
   const sn = sheetName.toLowerCase();
-  if (sn.includes("欧洲") || sn.includes("欧")) country = "欧洲";
+  if (sn.includes("欧洲") || sn.includes("欧")) country = "欧线";
   if (sn.includes("英国") || sn.includes("uk")) country = "英国";
 
   // Infer transport mode from sheet name
@@ -174,7 +174,7 @@ function parseGenericSheet(ws, sheetName, defaults) {
     let destType = "warehouse";
 
     // Determine destination
-    if (country === "欧洲") {
+    if (country === "欧线") {
       const cn = parseCountry(destText);
       if (cn && EU_COUNTRIES.some(c => cn.includes(c))) {
         destinations = [cn];
@@ -298,7 +298,7 @@ function parseXinsheng(filePath) {
       } else {
         // Try simple format
         let tiers = [{q:"21KG+",v:21},{q:"100KG+",v:100},{q:"500KG+",v:500}];
-        let country = sheetName.includes("欧洲") ? "欧洲" : "英国";
+        let country = sheetName.includes("欧洲") ? "欧线" : "英国";
         let tm = "海运";
         if (sheetName.includes("空")) tm = "空运";
         if (sheetName.includes("卡航")) tm = "卡航";

@@ -111,9 +111,14 @@ function query(params: QueryParams): { results: PriceEntry[]; total: number; bes
   const data = loadData();
   let results = [...data];
 
-  // 0. 国家过滤
+  // 0. 国家过滤 (归一化: "欧洲" 和 "欧线" 视为同一区域)
   if (params.country) {
-    results = results.filter((r) => (r as PriceEntryWithCountry).country === params.country);
+    const country = params.country;
+    results = results.filter((r) => {
+      const rc = (r as PriceEntryWithCountry).country || "";
+      if (country === "欧线" || country === "欧洲") return rc === "欧线" || rc === "欧洲";
+      return rc === country;
+    });
   }
 
   // 0.5 运输方式过滤
@@ -217,6 +222,11 @@ function query(params: QueryParams): { results: PriceEntry[]; total: number; bes
       "星链": "星链", "xinglian": "星链",
       "心一": "心一", "xinyi": "心一",
       "航乐": "航乐", "hangle": "航乐",
+      "丰运": "丰运", "fengyun": "丰运",
+      "华威尔": "华威尔", "huaweier": "华威尔",
+      "凯鑫": "凯鑫", "kaixin": "凯鑫",
+      "新胜": "新胜", "xinsheng": "新胜",
+      "美琦": "美琦", "meiqi": "美琦",
     };
     const targetSuppliers = suppliers.map(s => supplierMap[s] || s).filter(Boolean);
     if (targetSuppliers.length > 0) {

@@ -54,28 +54,28 @@ const LINE_CONFIG: Record<string, {
     icon: "🇬🇧",
     transportModes: ["全部", "海运", "卡航/专车", "铁路", "空运"],
     warehouses: ["BHX4", "LBA4", "BHX8", "BHX7", "LBA2", "MAN4", "MAN8", "LTN7", "LPL2"],
-    supplierDesc: "英美 · 天图 · 航乐",
+    supplierDesc: "英美 · 天图 · 航乐 · 新胜 · 凯鑫 · 丰运 · 华威尔",
   },
   "欧洲": {
     label: "欧洲线",
     icon: "🇪🇺",
     transportModes: ["全部", "海运", "卡航/专车", "铁路", "空运"],
     warehouses: ["DTM2", "WRO5", "HAJ1", "DUS2", "CDG7", "LYS1", "MXP5", "ZAZ1", "PRG1", "AMS1", "BHX4"],
-    supplierDesc: "英美 · 航乐 · 心一",
+    supplierDesc: "英美 · 航乐 · 心一 · 新胜 · 凯鑫 · 丰运 · 华威尔 · 皓鹏",
   },
   "加拿大": {
     label: "加拿大线",
     icon: "🇨🇦",
     transportModes: ["全部", "海运", "空运"],
     warehouses: ["YYZ1", "YYZ3", "YYZ4", "YYZ7", "YYZ9", "YVR1", "YVR2", "YVR3", "YXX2", "YOW1", "YOW3", "YEG1", "YEG2"],
-    supplierDesc: "美琦 · ETTON",
+    supplierDesc: "天图 · ETTON · 英美 · 皓鹏 · 美琦 · 凯鑫",
   },
   "墨西哥": {
     label: "墨西哥线",
     icon: "🇲🇽",
     transportModes: ["全部", "海运", "空运"],
     warehouses: ["MEX1", "MEX2", "MEX3", "MTY1", "MTY2", "GDL1", "QRO1"],
-    supplierDesc: "美琦",
+    supplierDesc: "美琦 · 皓鹏",
   },
   "巴西": {
     label: "巴西线",
@@ -93,7 +93,7 @@ const LINE_CONFIG: Record<string, {
   },
 };
 
-const ALL_SUPPLIERS = ["ETTON易通", "天图通逊", "英美跨境", "皓辉国际", "皓鹏国际", "星链专线", "心一供应链", "航乐国际", "丰运跨境", "华威尔", "美琦国际"];
+const ALL_SUPPLIERS = ["ETTON易通", "天图通逊", "英美跨境", "皓辉国际", "皓鹏国际", "星链专线", "心一供应链", "航乐国际", "丰运跨境", "华威尔", "凯鑫科技", "新胜供应链", "美琦国际"];
 
 // ── 常用城市 ──
 const POPULAR_CITIES = ["深圳", "东莞", "广州", "义乌", "上海", "宁波", "厦门", "泉州", "武汉"];

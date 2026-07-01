@@ -58,7 +58,7 @@ function parseTransit(text) {
 function makeRecord(opts) {
   return {
     supplier: SUPPLIER,
-    country: opts.country || "欧洲",
+    country: opts.country || "欧线",
     channel_name: opts.channelName || "",
     transport_mode: opts.transportMode || "海运",
     vessel_config: opts.vesselConfig || "",
@@ -171,7 +171,7 @@ function parseEUSheet(ws, sheetName, transportMode) {
       if (!isNaN(price) && price > 0 && warehouses.length > 0) {
         for (const wh of warehouses) {
           results.push(makeRecord({
-            country: "欧洲", channelName: `${sheetName}-${currentSection}`, transportMode,
+            country: "欧线", channelName: `${sheetName}-${currentSection}`, transportMode,
             vesselConfig: transportMode, vesselTags: [transportMode],
             deliveryMethod: currentSection === "专仓卡派" ? "卡派" : "快递派",
             destCode: wh, destType: "warehouse", destRegion: wh,
@@ -209,7 +209,7 @@ function parseEUSheet(ws, sheetName, transportMode) {
         const price = parseFloat(row[tier.col]);
         if (!isNaN(price) && price > 0) {
           results.push(makeRecord({
-            country: "欧洲", channelName: `${sheetName}-${currentSection}`, transportMode,
+            country: "欧线", channelName: `${sheetName}-${currentSection}`, transportMode,
             vesselConfig: transportMode, vesselTags: [transportMode],
             deliveryMethod: currentSection === "专仓卡派" ? "卡派" : "快递派",
             destCode: dest, destType, destRegion: dest,

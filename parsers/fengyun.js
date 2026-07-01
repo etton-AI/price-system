@@ -32,7 +32,7 @@ function parseTransit(text) {
 }
 function mkr(o) {
   return {
-    supplier: SUPPLIER, country: o.country || "欧洲", channel_name: o.cn || "", transport_mode: o.tm || "海运",
+    supplier: SUPPLIER, country: o.country || "欧线", channel_name: o.cn || "", transport_mode: o.tm || "海运",
     vessel_config: o.vc || "", vessel_tags: o.vt || [], delivery_method: o.dm || "快递派",
     destination_type: o.dt || "country", destination_code: o.dc || "", destination_region: o.dr || "",
     origin_region: o.or || "华南", origin_cities: o.oc || DEFAULT_CITIES.slice(0, 3),
@@ -85,7 +85,7 @@ function parseCityColSheet(ws, sheetName, cfg) {
         if (!isNaN(price) && price > 0) {
           for (const cn of countries) {
             results.push(mkr({
-              country: cfg.country || "欧洲", cn: `${sheetName}-${currentCh}`, tm: cfg.tm || "海运",
+              country: cfg.country || "欧线", cn: `${sheetName}-${currentCh}`, tm: cfg.tm || "海运",
               vc: cfg.tm || "海运", vt: [cfg.tm || "海运"], dm: "快递派",
               dc: cn, dt: "country", dr: cn,
               or: city.name, oc: cityList,
@@ -123,7 +123,7 @@ function parseXinyun(filePath) {
 
   const configs = [
     { name: "欧洲海运一口价", fn: (ws) => parseCityColSheet(ws, "欧洲海运一口价", {
-      country: "欧洲", tm: "海运",
+      country: "欧线", tm: "海运",
       subChannels: [
         { kw: "特惠-快递派", name: "特惠-快递派" },
         { kw: "特价", name: "大货特价" },
@@ -132,7 +132,7 @@ function parseXinyun(filePath) {
       transitCol: 9, szCol: 2, gzCol: 5, ywCol: 8,
     })},
     { name: "欧洲空运一口价", fn: (ws) => parseCityColSheet(ws, "欧洲空运一口价", {
-      country: "欧洲", tm: "空运",
+      country: "欧线", tm: "空运",
       subChannels: [
         { kw: "经济特惠", name: "经济特惠" },
         { kw: "特惠", name: "特惠" },
@@ -142,13 +142,13 @@ function parseXinyun(filePath) {
       transitCol: 9, szCol: 1, gzCol: 5, ywCol: -1,
     })},
     { name: "中欧卡航一口价", fn: (ws) => parseCityColSheet(ws, "中欧卡航一口价", {
-      country: "欧洲", tm: "卡航",
+      country: "欧线", tm: "卡航",
       subChannels: [{ kw: "限时达", name: "限时达一口价" }],
       tiers: [{ offset: 0, qty: "21KG+", val: 21 }, { offset: 1, qty: "100KG+", val: 100 }],
       transitCol: 9, szCol: 2, gzCol: 4, ywCol: 6,
     })},
     { name: "欧洲铁路一口价", fn: (ws) => parseCityColSheet(ws, "欧洲铁路一口价", {
-      country: "欧洲", tm: "铁路",
+      country: "欧线", tm: "铁路",
       subChannels: [
         { kw: "快递派", name: "快递派" },
         { kw: "卡派", name: "卡派" },
