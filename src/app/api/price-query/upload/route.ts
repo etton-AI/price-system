@@ -36,6 +36,7 @@ function identifySupplier(fileName: string): string | null {
   if (n.includes("华威尔") || n.includes("huaweier")) return "huaweier";
   if (n.includes("凯鑫") || n.includes("kaixin")) return "kaixin";
   if (n.includes("新胜") || n.includes("xinsheng")) return "xinsheng";
+  if (n.includes("美琦") || n.includes("meiqi")) return "meiqi";
   return null;
 }
 
@@ -55,6 +56,7 @@ const PARSER_REGISTRY: Record<string, { file: string; exportName: string }> = {
   huaweier:   { file: "huaweier.js",    exportName: "parseHuaweier" },
   kaixin:     { file: "kaixin.js",      exportName: "parseKaixin" },
   xinsheng:   { file: "xinsheng.js",    exportName: "parseXinsheng" },
+  meiqi:      { file: "meiqi_us.js",    exportName: "parseMeiQi" },
 };
 
 /** 多线路供应商：同一 Excel 可能包含多个国家的 Sheet，需依次尝试所有子解析器 */
@@ -230,7 +232,7 @@ export async function POST(request: NextRequest) {
       "易通": "etton", "天图通逊": "tiantu", "英美": "yingmei",
       "皓辉": "haohui", "皓鹏": "haopeng", "星链": "xinglian",
       "心一": "xinyi", "航乐": "hangle", "丰运": "fengyun",
-      "华威尔": "huaweier", "凯鑫": "kaixin", "新胜": "xinsheng",
+      "华威尔": "huaweier", "凯鑫": "kaixin", "新胜": "xinsheng", "美琦": "meiqi",
     };
     // 天图细分：有 country 字段后，检查是否包含英国/空运标记
     const stats: Record<string, number> = {};

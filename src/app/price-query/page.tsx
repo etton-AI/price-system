@@ -63,9 +63,37 @@ const LINE_CONFIG: Record<string, {
     warehouses: ["DTM2", "WRO5", "HAJ1", "DUS2", "CDG7", "LYS1", "MXP5", "ZAZ1", "PRG1", "AMS1", "BHX4"],
     supplierDesc: "英美 · 航乐 · 心一",
   },
+  "加拿大": {
+    label: "加拿大线",
+    icon: "🇨🇦",
+    transportModes: ["全部", "海运", "空运"],
+    warehouses: ["YYZ1", "YYZ3", "YYZ4", "YYZ7", "YYZ9", "YVR1", "YVR2", "YVR3", "YXX2", "YOW1", "YOW3", "YEG1", "YEG2"],
+    supplierDesc: "美琦 · ETTON",
+  },
+  "墨西哥": {
+    label: "墨西哥线",
+    icon: "🇲🇽",
+    transportModes: ["全部", "海运", "空运"],
+    warehouses: ["MEX1", "MEX2", "MEX3", "MTY1", "MTY2", "GDL1", "QRO1"],
+    supplierDesc: "美琦",
+  },
+  "巴西": {
+    label: "巴西线",
+    icon: "🇧🇷",
+    transportModes: ["全部", "海运", "空运"],
+    warehouses: ["GRU1", "GRU2", "GRU3", "VCP1", "VCP2", "REC1"],
+    supplierDesc: "皓鹏",
+  },
+  "澳大利亚": {
+    label: "澳洲线",
+    icon: "🇦🇺",
+    transportModes: ["全部", "海运", "空运"],
+    warehouses: ["SYD1", "SYD3", "MEL1", "MEL5", "BNE1", "PER1", "ADL1"],
+    supplierDesc: "星链 · 皓鹏 · ETTON",
+  },
 };
 
-const ALL_SUPPLIERS = ["ETTON易通", "天图通逊", "英美跨境", "皓辉国际", "皓鹏国际", "星链专线", "心一供应链", "航乐国际"];
+const ALL_SUPPLIERS = ["ETTON易通", "天图通逊", "英美跨境", "皓辉国际", "皓鹏国际", "星链专线", "心一供应链", "航乐国际", "丰运跨境", "华威尔", "美琦国际"];
 
 // ── 常用城市 ──
 const POPULAR_CITIES = ["深圳", "东莞", "广州", "义乌", "上海", "宁波", "厦门", "泉州", "武汉"];
@@ -87,6 +115,7 @@ function supplierBadge(s: string) {
   if (s.includes("华威尔")) return { bg: "bg-lime-100", text: "text-lime-700", border: "border-lime-300" };
   if (s.includes("凯鑫")) return { bg: "bg-violet-100", text: "text-violet-700", border: "border-violet-300" };
   if (s.includes("新胜")) return { bg: "bg-sky-100", text: "text-sky-700", border: "border-sky-300" };
+  if (s.includes("美琦")) return { bg: "bg-indigo-100", text: "text-indigo-700", border: "border-indigo-300" };
   return { bg: "bg-gray-100", text: "text-gray-700", border: "border-gray-300" };
 }
 
@@ -141,7 +170,11 @@ export default function PriceQueryPage() {
       if ((s.includes(key.replace(/\s/g, "").slice(0, 4)) || key.includes(s.slice(0, 4))) && meta.countries) {
         if (country === "美国") return meta.countries.includes("美国");
         if (country === "英国") return meta.countries.includes("英国");
-        if (country === "欧洲") return meta.countries.some((c: string) => !["美国", "英国"].includes(c));
+        if (country === "欧洲") return meta.countries.some((c: string) => !["美国", "英国", "加拿大", "墨西哥", "巴西", "澳大利亚"].includes(c));
+        if (country === "加拿大") return meta.countries.includes("加拿大");
+        if (country === "墨西哥") return meta.countries.includes("墨西哥");
+        if (country === "巴西") return meta.countries.includes("巴西");
+        if (country === "澳大利亚") return meta.countries.includes("澳大利亚");
       }
     }
     return false;
@@ -734,7 +767,11 @@ export default function PriceQueryPage() {
             <p className="text-gray-300 text-sm mt-2">
               {country === "美国" ? "例如：美线 → 海运 → ONT8 + 深圳 + 100KG + EXX" :
                country === "英国" ? "例如：英国线 → 卡航 → BHX4 + 深圳 + 100KG" :
-               "例如：欧洲线 → 铁路 → DTM2 + 深圳 + 100KG"}
+               country === "欧洲" ? "例如：欧洲线 → 铁路 → DTM2 + 深圳 + 100KG" :
+               country === "加拿大" ? "例如：加拿大线 → 海运 → YYZ1 + 深圳 + 100KG" :
+               country === "墨西哥" ? "例如：墨西哥线 → 海运 → 墨西哥城 + 100KG" :
+               country === "巴西" ? "例如：巴西线 → 海运 → GRU1 + 深圳 + 100KG" :
+               "例如：澳洲线 → 海运 → SYD1 + 深圳 + 100KG"}
             </p>
           </div>
         )}
