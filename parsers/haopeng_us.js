@@ -21,9 +21,9 @@
  */
 
 const XLSX = require("xlsx");
+const { detectCountry, detectAllCountries } = require("./country-detector");
 
 const SUPPLIER = "皓鹏国际";
-const COUNTRY = "美国";
 
 // ── 默认发货城市 ──
 const DEFAULT_CITIES = ["深圳", "广州", "东莞", "中山", "惠州", "义乌", "上海", "宁波", "杭州", "厦门", "泉州", "福州"];
@@ -101,7 +101,7 @@ function parseTransit(text, extra) {
 function makeRecord(opts) {
   return {
     supplier: SUPPLIER,
-    country: COUNTRY,
+    country: opts.country || detectCountry(opts.sourceSheet || "") || "美国",
     channel_name: opts.channelName || "",
     transport_mode: opts.transportMode || "海运",
     vessel_config: opts.vesselConfig || "",
@@ -636,6 +636,7 @@ function parseHaopeng(filePath) {
   const wb = XLSX.readFile(filePath);
   const allResults = [];
 
+  // 已知 Sheet → 解析器（所有国家共用同一套解析器，国家由 Sheet 名检测）
   const sheetParsers = {
     "美森以星合德OA海派": parseSeaExpress,
     "美森以星合德OA非OA海卡": parseSeaTruckMain,
@@ -645,6 +646,7 @@ function parseHaopeng(filePath) {
     "美东萨凡纳海卡": parseSavannah,
     "美西美东商私卡": parseCommercialCard,
     "美国空运": parseAirFreight,
+    "美国空运小货特快": parseAirFreight,
   };
 
   // Handle NY sheet with possible trailing space
@@ -653,16 +655,42 @@ function parseHaopeng(filePath) {
     sheetParsers[nySheetName] = parseNewYork;
   }
 
-  for (const [sheetName, parser] of Object.entries(sheetParsers)) {
-    if (wb.SheetNames.includes(sheetName)) {
+  // 报告检测到的国家
+  const allCountries = detectAllCountries(wb);
+  console.log(`[皓鹏] 检测到国家: ${allCountries.join(", ") || "仅美国"}`);
+
+  const skippedSheets = [];
+
+  // 按 Sheet 名逐个匹配解析器
+  for (const sheetName of wb.SheetNames) {
+    if (sheetName.includes("渠道目录") || sheetName.includes("目录") || sheetName.startsWith("暂停")) continue;
+
+    const parser = sheetParsers[sheetName];
+    if (parser) {
       try {
         const results = parser(wb.Sheets[sheetName]);
-        console.log(`  [${sheetName.trim()}] ${results.length} 条`);
+        // ✅ 根据 Sheet 名自动覆盖国家（核心改进）
+        const sheetCountry = detectCountry(sheetName);
+        for (const r of results) {
+          if (sheetCountry) r.country = sheetCountry;
+        }
+        console.log(`  [${sheetName.trim()}] ${results.length} 条 → ${sheetCountry || "美国"}`);
         allResults.push(...results);
       } catch (err) {
         console.error(`  [${sheetName.trim()}] 解析失败: ${err.message}`);
       }
+    } else {
+      const country = detectCountry(sheetName);
+      if (country) {
+        skippedSheets.push(`${sheetName.trim()} (${country})`);
+      } else {
+        skippedSheets.push(sheetName.trim());
+      }
     }
+  }
+
+  if (skippedSheets.length > 0) {
+    console.log(`[皓鹏] ⚠ 暂未解析的Sheet (需补充解析器): ${skippedSheets.join(" | ")}`);
   }
 
   console.log(`[皓鹏] 总计 ${allResults.length} 条`);
