@@ -463,8 +463,138 @@ function parseYingmei(filePath) {
     allResults.push(...r);
   }
 
+  // ── 加拿大 Sheets（统一格式：渠道×地区×仓库×3城市组×3重量段）──
+  const caSheets = wb.SheetNames.filter((sn) =>
+    ["直航快船", "直航统配特惠", "合德美转加", "COSCO美转加", "美森美转加", "商私地址卡派"].includes(sn)
+  );
+  for (const sn of caSheets) {
+    const r = parseYingmeiCanada(wb.Sheets[sn], sn);
+    console.log(`  [${sn}] ${r.length} 条 → 加拿大`);
+    allResults.push(...r);
+  }
+
   console.log(`[英美] 总计解析 ${allResults.length} 条价格记录`);
   return allResults;
+}
+
+// ── 加拿大 Sheet 解析器 ──
+function parseYingmeiCanada(ws, sheetName) {
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+  if (data.length < 5) return [];
+  const results = [];
+
+  // Detect sections: rows with "渠道名称" in col0 are section headers
+  const sections = [];
+  for (let ri = 0; ri < data.length; ri++) {
+    const row = data[ri];
+    const c0 = String(row[0] || "").trim();
+    const c1 = String(row[1] || "").trim();
+
+    if (c0 === "渠道名称" || (c1 === "地区" && row[2] && String(row[2]).includes("仓库"))) {
+      // This is a section header — next row has weight tiers, then data
+      if (ri + 2 < data.length) {
+        const tierRow = data[ri + 1];
+        const tiers = [];
+        for (let c = 3; c < Math.min(tierRow.length, 14); c++) {
+          const cell = String(tierRow[c] || "").trim();
+          const m = cell.match(/(\d+)\s*KG/i);
+          if (m) tiers.push({ col: c, label: cell, value: parseInt(m[1]), qty: cell });
+        }
+        if (tiers.length >= 3) {
+          // Determine delivery method from the sheet title or nearby row
+          const prevRow = data[ri - 1] || [];
+          const prevTitle = String(prevRow[0] || prevRow[1] || "").trim();
+          let dm = "快递派";
+          if (prevTitle.includes("卡派") || prevTitle.includes("海卡")) dm = "卡派";
+          if (prevTitle.includes("海派") || prevTitle.includes("快递")) dm = "快递派";
+          if (sheetName.includes("商私地址")) dm = "卡派";
+
+          sections.push({ dataStartRow: ri + 2, tiers, deliveryMethod: dm, prevTitle });
+        }
+      }
+    }
+  }
+
+  if (sections.length === 0) return [];
+
+  // 3 city groups: 华南(col3-5), 华中(col6-8), 华东(col9-11)
+  const cityGroups = [
+    { label: "华南", cities: ["深圳","东莞","广州","中山","汕头"], tierOffset: 0 },
+    { label: "华中", cities: ["泉州","厦门","福州"], tierOffset: 3 },
+    { label: "华东", cities: ["义乌","上海","温州","宁波","杭州"], tierOffset: 6 },
+  ];
+
+  for (const sec of sections) {
+    for (let ri = sec.dataStartRow; ri < data.length; ri++) {
+      const row = data[ri];
+      const c0 = String(row[0] || "").trim();
+      const c1 = String(row[1] || "").trim();
+
+      // Stop at next section header
+      if (c0 === "渠道名称" || (c1 === "地区" && String(row[2] || "").includes("仓库"))) break;
+      // Skip notes and empty rows
+      if (c0.includes("非亚马逊") || c0.includes("渠道名称") || (!c0 && !c1)) continue;
+
+      // Extract channel code and region
+      const channelCode = c0.replace(/\r?\n/g, " ").trim();
+      const region = c1.replace(/\r?\n/g, " ").trim();
+
+      if (!channelCode || channelCode.length < 3) continue;
+
+      // Extract warehouses from col2
+      const whText = String(row[2] || "").replace(/\r?\n/g, " ").trim();
+      const whMatch = whText.match(/[A-Z]{2,}\d/g);
+      const warehouses = whMatch || [region.replace(/\s+/g, "").slice(0, 20)];
+
+      // Determine transport mode and vessel from channel name
+      let tm = "海运";
+      let vesselConfig = "";
+      const title = sec.prevTitle;
+      if (title.includes("直航")) { vesselConfig = "直航快船"; }
+      if (title.includes("合德")) { vesselConfig = "合德美转加"; }
+      if (title.includes("COSCO")) { vesselConfig = "COSCO美转加"; }
+      if (title.includes("美森")) { vesselConfig = "美森MATSON美转加"; }
+      if (title.includes("特惠统配")) { vesselConfig = "普船统配特惠"; }
+
+      for (const cg of cityGroups) {
+        for (const tier of sec.tiers.slice(0, 3)) { // first 3 tiers per city group
+          const col = cg.tierOffset + tier.col;
+          const price = parseFloat(row[col]);
+          if (isNaN(price) || price <= 0 || price > 99999) continue;
+
+          for (const wh of warehouses) {
+            results.push({
+              supplier: "英美跨境",
+              country: "加拿大",
+              channel_name: channelCode,
+              speed_tier: "",
+              vessel_config: vesselConfig,
+              vessel_tags: vesselConfig ? [vesselConfig] : [],
+              delivery_method: sec.deliveryMethod,
+              destination_type: "warehouse",
+              destination_code: wh,
+              destination_region: region,
+              origin_region: cg.label,
+              origin_cities: cg.cities,
+              billing_type: "包税",
+              min_quantity: tier.qty,
+              min_quantity_value: tier.value,
+              unit_price: price,
+              price_unit: "元/KG",
+              transit_time_min: null,
+              transit_time_max: null,
+              transit_time_desc: "",
+              claim_rule: "",
+              effective_date: "",
+              source_sheet: sheetName,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return results;
 }
 
 module.exports = { parseYingmei };
