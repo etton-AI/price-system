@@ -183,8 +183,8 @@ function parseMatchSeries(ws) {
   const config1 = {
     channelName: "Match12-卡派",
     transportMode: "海运",
-    vesselConfig: "CLX/MAX-GES/MATSON",
-    vesselTags: ["美森", "Matson", "CLX"],
+    vesselConfig: "美森MATSON(CLX正班/MAX加班)",
+    vesselTags: ["美森", "MATSON", "CLX正班", "MAX加班"],
     deliveryMethod: "卡派",
     dataStartRow: 7,
     warehouseCol: 2,
@@ -314,8 +314,8 @@ function parseMeisenEast(ws) {
   const config = {
     channelName: "美森美东秒送",
     transportMode: "海运",
-    vesselConfig: "美森GES/MATSON",
-    vesselTags: ["美森","Matson","GES"],
+    vesselConfig: "美森MATSON GES",
+    vesselTags: ["美森","MATSON","GES"],
     deliveryMethod: "卡派",
     dataStartRow: 7,
     warehouseCol: 2,

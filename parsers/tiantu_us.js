@@ -66,13 +66,13 @@ function inferTiantuMeta(channelName) {
 
   if (n.includes("美森极速12日达")) {
     meta.speed_tier = "12-15日达";
-    meta.vessel_config = "美森正班CLX";
+    meta.vessel_config = "美森MATSON CLX(正班)";
   } else if (n.includes("CLX13日达") || n.includes("美森正班13日达")) {
     meta.speed_tier = "12-15日达";
-    meta.vessel_config = "美森正班CLX";
+    meta.vessel_config = "美森MATSON CLX(正班)";
   } else if (n.includes("MAX14日达") || n.includes("美森15日达")) {
     meta.speed_tier = "12-15日达";
-    meta.vessel_config = "美森MAX";
+    meta.vessel_config = "美森MATSON MAX(加班)";
   } else if (n.includes("EXX16日达") || n.includes("OA/以星17日达")) {
     meta.speed_tier = "17-20日达";
     meta.vessel_config = "EXX/以星带托架";
@@ -93,7 +93,7 @@ function inferTiantuMeta(channelName) {
     meta.vessel_config = "普船统配";
   } else if (n.includes("美森统配17日达")) {
     meta.speed_tier = "17-20日达";
-    meta.vessel_config = "美森统配";
+    meta.vessel_config = "美森MATSON 统配";
   } else if (n.includes("OA26日达直送")) {
     meta.speed_tier = "22-28日达";
     meta.vessel_config = "OA";
@@ -123,7 +123,7 @@ function inferTiantuMeta(channelName) {
     meta.vessel_config = "普船统配";
   } else if (n.includes("纽约美森快线")) {
     meta.speed_tier = "22-28日达";
-    meta.vessel_config = "美森CLX";
+    meta.vessel_config = "美森MATSON CLX";
   } else if (n.includes("纽约海陆")) {
     meta.speed_tier = "22-28日达";
     meta.vessel_config = "海铁/海陆";
