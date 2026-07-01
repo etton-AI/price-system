@@ -15,52 +15,79 @@ import { createRequire } from "module";
 
 const nodeRequire = createRequire(import.meta.url);
 
+/** 与 build_db.js 一致的供应商识别 */
+function identifySupplier(fileName: string): string | null {
+  const n = fileName.toLowerCase();
+  // 跳过非价格表文件（船期表、出运计划等）
+  if (n.includes("出运计划") || n.includes("船期") || n.includes("schedule")) return "skip";
+  // 天图英国（必须不含"美"）
+  if ((n.includes("天图") || n.includes("tiantu")) && n.includes("英国") && !n.includes("美")) return "tiantu_uk";
+  // 天图空运（必须在普通 tiantu 之前）
+  if ((n.includes("天图") || n.includes("tiantu")) && (n.includes("空运") || n.includes("air"))) return "tiantu_air";
+  if (n.includes("皓辉") || n.includes("haohui")) return "haohui";
+  if (n.includes("皓鹏") || n.includes("haopeng")) return "haopeng";
+  if (n.includes("星链") || n.includes("xinglian")) return "xinglian";
+  if (n.includes("心一") || n.includes("xinyi")) return "xinyi";
+  if (n.includes("航乐") || n.includes("hangle") || n.includes("yue")) return "hangle";
+  if (n.includes("etton") || n.includes("易通")) return "etton";
+  if (n.includes("天图") || n.includes("tiantu")) return "tiantu";
+  if (n.includes("英美") || n.includes("yingmei")) return "yingmei";
+  if (n.includes("丰运") || n.includes("fengyun")) return "fengyun";
+  if (n.includes("华威尔") || n.includes("huaweier")) return "huaweier";
+  if (n.includes("凯鑫") || n.includes("kaixin")) return "kaixin";
+  if (n.includes("新胜") || n.includes("xinsheng")) return "xinsheng";
+  return null;
+}
+
+/** 解析器文件名 → 导出函数名映射 */
+const PARSER_REGISTRY: Record<string, { file: string; exportName: string }> = {
+  etton:      { file: "etton_us.js",    exportName: "parseETTON" },
+  tiantu:     { file: "tiantu_us.js",   exportName: "parseTiantu" },
+  tiantu_uk:  { file: "tiantu_uk.js",   exportName: "parseTiantuUK" },
+  tiantu_air: { file: "tiantu_air.js",  exportName: "parseTiantuAir" },
+  yingmei:    { file: "yingmei_us.js",  exportName: "parseYingmei" },
+  haohui:     { file: "haohui_us.js",   exportName: "parseHaohui" },
+  haopeng:    { file: "haopeng_us.js",  exportName: "parseHaopeng" },
+  xinglian:   { file: "xinglian_us.js", exportName: "parseXinglian" },
+  xinyi:      { file: "xinyi_eu.js",    exportName: "parseXinyi" },
+  hangle:     { file: "hangle.js",      exportName: "parseHangle" },
+  fengyun:    { file: "fengyun.js",     exportName: "parseXinyun" },
+  huaweier:   { file: "huaweier.js",    exportName: "parseHuaweier" },
+  kaixin:     { file: "kaixin.js",      exportName: "parseKaixin" },
+  xinsheng:   { file: "xinsheng.js",    exportName: "parseXinsheng" },
+};
+
 function parseWithNode(filePath: string, supplier: string): PriceEntry[] {
   const fileName = path.basename(filePath);
 
-  // 通过文件名自动识别供应商
-  const patterns: Record<string, RegExp> = {
-    etton: /etton|易通/i,
-    tiantu: /天图|tiantu/i,
-    yingmei: /英美|yingmei/i,
-  };
-
+  // 自动识别供应商
   if (!supplier) {
-    for (const [key, pattern] of Object.entries(patterns)) {
-      if (pattern.test(fileName)) {
-        supplier = key;
-        break;
-      }
+    const identified = identifySupplier(fileName);
+    if (!identified) {
+      throw new Error(
+        `无法识别供应商，文件名需包含供应商标识（如 ETTON/易通、天图/tiantu、英美/yingmei、皓辉/haohui、皓鹏/haopeng、星链/xinglian 等）`
+      );
     }
+    if (identified === "skip") {
+      throw new Error(`非价格表文件（船期/出运计划），已跳过: ${fileName}`);
+    }
+    supplier = identified;
   }
 
-  if (!supplier) {
-    throw new Error(`无法识别供应商，文件名需包含 "ETTON/易通"、"天图/tiantu" 或 "英美/yingmei"`);
-  }
-
-  // 加载对应解析器（纯 JS CommonJS 模块）
+  // 加载对应解析器
   const parsersDir = path.join(process.cwd(), "parsers");
-  let results: PriceEntry[] = [];
-
-  switch (supplier) {
-    case "etton": {
-      const mod = nodeRequire(path.join(parsersDir, "etton_us.js"));
-      results = mod.parseETTON(filePath);
-      break;
-    }
-    case "tiantu": {
-      const mod = nodeRequire(path.join(parsersDir, "tiantu_us.js"));
-      results = mod.parseTiantu(filePath);
-      break;
-    }
-    case "yingmei": {
-      const mod = nodeRequire(path.join(parsersDir, "yingmei_us.js"));
-      results = mod.parseYingmei(filePath);
-      break;
-    }
-    default:
-      throw new Error(`未知供应商: ${supplier}`);
+  const entry = PARSER_REGISTRY[supplier];
+  if (!entry) {
+    throw new Error(`未知供应商: ${supplier}`);
   }
+
+  const mod = nodeRequire(path.join(parsersDir, entry.file));
+  const parseFn = mod[entry.exportName];
+  if (typeof parseFn !== "function") {
+    throw new Error(`解析器 ${entry.file} 未导出 ${entry.exportName}`);
+  }
+
+  const results: PriceEntry[] = parseFn(filePath);
 
   // 提取生效日期
   let effectiveDate = "";
@@ -166,10 +193,20 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 统计
+    // 统计（与 build_db.js 一致的供应商映射）
+    const supplierStatsMap: Record<string, string> = {
+      "易通": "etton", "天图通逊": "tiantu", "英美": "yingmei",
+      "皓辉": "haohui", "皓鹏": "haopeng", "星链": "xinglian",
+      "心一": "xinyi", "航乐": "hangle", "丰运": "fengyun",
+      "华威尔": "huaweier", "凯鑫": "kaixin", "新胜": "xinsheng",
+    };
+    // 天图细分：有 country 字段后，检查是否包含英国/空运标记
     const stats: Record<string, number> = {};
     for (const r of deduped) {
-      const key = r.supplier.includes("易通") ? "etton" : r.supplier.includes("天图") ? "tiantu" : r.supplier.includes("英美") ? "yingmei" : "other";
+      let key = "other";
+      for (const [name, slug] of Object.entries(supplierStatsMap)) {
+        if (r.supplier.includes(name)) { key = slug; break; }
+      }
       stats[key] = (stats[key] || 0) + 1;
     }
 
