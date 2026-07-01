@@ -1,27 +1,18 @@
 /**
- * 凯鑫科技 — 美线+欧洲线+英国线价格解析器
- * 覆盖: 美国空派 / 欧洲卡派+快递派(铁路/海运/卡航) / 英国(铁路/海运/卡航)
+ * 凯鑫科技 — 美/欧/英/加线价格解析器
+ * 覆盖: 美国空派 / 欧洲卡派+快递派 / 欧洲超大件 / 英国 / 罗马尼亚专线 / A50加拿大
  */
 const XLSX = require("xlsx");
 const SUPPLIER = "凯鑫科技";
 
-const EU_COUNTRIES = ["德国", "法国", "意大利", "西班牙", "波兰", "捷克", "荷兰", "奥地利", "比利时", "卢森堡", "丹麦", "瑞典", "芬兰", "匈牙利", "希腊", "葡萄牙", "爱尔兰", "罗马尼亚", "保加利亚", "克罗地亚", "斯洛文尼亚", "斯洛伐克"];
-
-function pCountries(cell) {
-  const t = String(cell).replace(/\r?\n/g, " ").trim();
-  for (const cn of EU_COUNTRIES) { if (t === cn) return [cn]; }
-  const parts = t.split(/[ ,，、]+/).filter(Boolean);
-  const r = [];
-  for (const p of parts) { for (const cn of EU_COUNTRIES) { if (p === cn || p.includes(cn)) { r.push(cn); break; } } }
-  return r.length > 0 ? r : [t];
-}
+const EU_COUNTRIES = ["德国","法国","意大利","西班牙","波兰","捷克","荷兰","奥地利","比利时","卢森堡","丹麦","瑞典","芬兰","匈牙利","希腊","葡萄牙","爱尔兰","罗马尼亚","保加利亚","克罗地亚","斯洛文尼亚","斯洛伐克","爱沙尼亚","立陶宛","拉脱维亚"];
 
 function mkr(o) {
   return {
-    supplier: SUPPLIER, country: o.c || "美国", channel_name: o.cn || "", transport_mode: o.tm || "海运",
+    supplier: SUPPLIER, country: o.c || "欧洲", channel_name: o.cn || "", transport_mode: o.tm || "铁路",
     vessel_config: o.vc || "", vessel_tags: o.vt || [], delivery_method: o.dm || "卡派",
-    destination_type: o.dt || "country", destination_code: o.dc || "", destination_region: o.dr || "",
-    origin_region: "华南", origin_cities: ["深圳", "东莞", "广州", "中山"],
+    destination_type: o.dt || "warehouse", destination_code: o.dc || "", destination_region: o.dr || "",
+    origin_region: "华南", origin_cities: ["深圳","东莞","广州","中山"],
     billing_type: o.bt || "包税", tax_mode: o.tx || o.bt || "包税",
     min_quantity: o.mq || "", min_quantity_value: o.mv || 0, unit_price: o.p || 0, price_unit: "元/KG",
     transit_time_min: o.tn || null, transit_time_max: o.tx2 || null, transit_time_desc: o.td || "",
@@ -29,137 +20,319 @@ function mkr(o) {
   };
 }
 
-// ── 欧洲快递派 (铁路/海运/卡航 sub-tables within one sheet) ──
-function parseEUDelivery(ws, sheetName) {
+/**
+ * 通用分组解析: 检测表头行 → 识别列组(渠道×税模式) → 解析数据行
+ * 适用于凯鑫大部分 Sheet
+ */
+function parseGroupedSheet(ws, sheetName, defaults) {
   const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
-  if (data.length < 5) return [];
+  if (data.length < 4) return [];
   const results = [];
-  let currentMode = "", currentCh = "";
 
-  for (let ri = 1; ri < data.length; ri++) {
+  // Determine country from sheet name
+  let country = defaults.country || "欧洲";
+  if (sheetName.includes("英国")) country = "英国";
+  if (sheetName.includes("加拿大")) country = "加拿大";
+  if (sheetName.includes("美国")) country = "美国";
+  if (sheetName.includes("罗马尼亚")) country = "欧洲";
+
+  // Determine transport mode
+  let tm = defaults.tm || "铁路";
+  if (sheetName.includes("海运")) tm = "海运";
+  if (sheetName.includes("空派") || sheetName.includes("空运")) tm = "空运";
+
+  // Determine delivery method
+  let dm = "卡派";
+  if (sheetName.includes("快递派")) dm = "快递派";
+
+  // Find header rows: look for rows with weight tier patterns (21KG+, 51KG+, etc.)
+  let headerRowIdx = -1;
+  let subHeaderRowIdx = -1;
+  for (let ri = 1; ri < Math.min(data.length, 6); ri++) {
     const row = data[ri];
-    const c1 = String(row[1] || "").trim();
-    const c2 = String(row[2] || "").trim();
+    let kgCount = 0;
+    for (let c = 2; c < Math.min(row.length, 14); c++) {
+      const cell = String(row[c] || "").trim();
+      if (cell.match(/\d+\s*KG\+/i) || cell.match(/\d+\s*CBM\+/i)) kgCount++;
+    }
+    if (kgCount >= 2) {
+      if (headerRowIdx < 0) headerRowIdx = ri;
+      else if (subHeaderRowIdx < 0) subHeaderRowIdx = ri;
+      else break;
+    }
+  }
 
-    if (c1.includes("铁路")) { currentMode = "铁路"; continue; }
-    if (c1.includes("海运")) { currentMode = "海运"; continue; }
-    if (c1.includes("卡航")) { currentMode = "卡航"; continue; }
-    if (c2.includes("包税")) { currentCh = "包税"; continue; }
-    if (c2.includes("递延") || c2.includes("自税")) { currentCh = "递延/自税"; continue; }
+  if (headerRowIdx < 0) return [];
 
-    if (!currentMode || !currentCh) continue;
-    if (!c1 || c1 === "国家/渠道" || c1 === "渠道" || c1 === "派送方式") continue;
+  // Find channel/tax grouping rows (usually rows 1-3)
+  // Look for rows with "包税", "递延", "自税", transport mode names
+  const groupRows = [];
+  for (let ri = 1; ri < headerRowIdx; ri++) {
+    const row = data[ri];
+    const text = row.slice(1).map(c => String(c || "").trim()).join(" ");
+    if (text.includes("包税") || text.includes("递延") || text.includes("自税") || text.includes("铁路") || text.includes("海运") || text.includes("快铁") || text.includes("卡航")) {
+      groupRows.push(ri);
+    }
+  }
 
-    const countries = pCountries(c1);
-    if (countries.length === 0) continue;
+  // Find channel column groups from header row
+  const headerRow = data[headerRowIdx];
+  const subHeaderRow = subHeaderRowIdx >= 0 ? data[subHeaderRowIdx] : null;
 
-    const taxCols = currentCh.includes("递延") ? { start: 4, labels: ["21KG+", "51KG+", "101KG+"], vals: [21, 51, 101] }
-      : { start: 1, labels: ["21KG+", "51KG+", "101KG+"], vals: [21, 51, 101] };
+  // Identify channel groups: scan columns 2+ for contiguous blocks
+  const channelGroups = [];
+  let currentGroup = null;
 
-    if (currentCh === "包税") {
-      for (let ti = 0; ti < 3; ti++) {
-        const p = parseFloat(row[2 + ti]); // cols 2,3,4
-        if (!isNaN(p) && p > 0) {
-          for (const cn of countries) {
-            results.push(mkr({ c: "欧洲", cn: `欧洲${currentMode}-快递派包税`, tm: currentMode, vc: currentMode, vt: [currentMode],
-              dm: "快递派", dc: cn, dt: "country", dr: cn, bt: "包税",
-              mq: taxCols.labels[ti], mv: taxCols.vals[ti], p, ss: sheetName }));
-          }
-        }
+  for (let col = 2; col < Math.min(headerRow.length, 18); col++) {
+    const hdrCell = String(headerRow[col] || "").trim();
+    const subCell = subHeaderRow ? String(subHeaderRow[col] || "").trim() : "";
+    const wtMatch = hdrCell.match(/(\d+)\s*KG\+/i) || hdrCell.match(/(\d+)\s*CBM\+/i) || subCell.match(/(\d+)\s*KG\+/i) || subCell.match(/(\d+)\s*CBM\+/i);
+
+    if (wtMatch || (currentGroup && (!hdrCell || hdrCell === "" || wtMatch))) {
+      // Part of current group or new weight tier
+      if (!currentGroup) {
+        // Look back to find channel name from group rows
+        currentGroup = { startCol: col, endCol: col, tiers: [], channelName: "", taxMode: "包税" };
       }
-      // 递延 cols 5,6,7
-      for (let ti = 0; ti < 3; ti++) {
-        const p = parseFloat(row[5 + ti]);
-        if (!isNaN(p) && p > 0) {
-          for (const cn of countries) {
-            results.push(mkr({ c: "欧洲", cn: `欧洲${currentMode}-快递派递延`, tm: currentMode, vc: currentMode, vt: [currentMode],
-              dm: "快递派", dc: cn, dt: "country", dr: cn, bt: "递延", tx: "递延",
-              mq: taxCols.labels[ti], mv: taxCols.vals[ti], p, ss: sheetName }));
-          }
-        }
+      let tierLabel = hdrCell || subCell;
+      let mv = parseInt(wtMatch?.[1] || "21");
+      currentGroup.tiers.push({ col, label: tierLabel, value: mv, qty: tierLabel });
+      currentGroup.endCol = col;
+    } else if (currentGroup && hdrCell && !wtMatch) {
+      // End of group
+      channelGroups.push(currentGroup);
+      currentGroup = null;
+    }
+  }
+  if (currentGroup && currentGroup.tiers.length > 0) {
+    channelGroups.push(currentGroup);
+  }
+
+  // Try to infer channel names and tax modes from group rows
+  if (channelGroups.length > 0 && groupRows.length > 0) {
+    // For each channel group, look at the group rows to infer name
+    for (let gi = 0; gi < channelGroups.length; gi++) {
+      const cg = channelGroups[gi];
+      const midCol = Math.floor((cg.startCol + cg.endCol) / 2);
+
+      // Look for text in group rows around this column
+      const labels = [];
+      for (const gr of groupRows) {
+        const cell = String(data[gr][midCol] || data[gr][cg.startCol] || "").trim();
+        if (cell && cell.length > 1 && !cell.match(/^\d/)) labels.push(cell);
+      }
+
+      // Infer channel name
+      if (labels.length > 0) {
+        // Determine transport mode from labels
+        let modeLabel = tm;
+        if (labels.some(l => l.includes("铁路"))) modeLabel = "铁路";
+        if (labels.some(l => l.includes("快铁"))) modeLabel = "快铁";
+        if (labels.some(l => l.includes("海运"))) modeLabel = "海运";
+        if (labels.some(l => l.includes("卡航"))) modeLabel = "卡航";
+
+        let taxLabel = "包税";
+        if (labels.some(l => l.includes("递延"))) taxLabel = "递延";
+        if (labels.some(l => l.includes("自税"))) taxLabel = "自税";
+
+        cg.channelName = `欧洲${modeLabel}-${dm}${taxLabel}`;
+        if (country === "英国") cg.channelName = `英国${modeLabel}-${dm}${taxLabel}`;
+        if (country === "加拿大") cg.channelName = `加拿大${modeLabel}-${dm}${taxLabel}`;
+        cg.taxMode = taxLabel;
+      } else {
+        cg.channelName = `${country}${tm}-${dm}`;
       }
     }
   }
-  return results;
-}
 
-// ── 英国 (铁路/海运/卡航) ──
-function parseUK(ws) {
-  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
-  if (data.length < 5) return [];
-  const results = [];
-  let currentMode = "", currentCh = "";
+  // If no channel groups detected, use simple approach
+  if (channelGroups.length === 0) {
+    // Simple: all cols 2+ are one channel group
+    const cg = { startCol: 2, endCol: Math.min(headerRow.length - 1, 12), tiers: [], channelName: `${country}${tm}-${dm}`, taxMode: "包税" };
+    for (let col = 2; col <= cg.endCol; col++) {
+      const cell = String(headerRow[col] || "").trim();
+      const wtMatch = cell.match(/(\d+)\s*KG\+/i);
+      if (wtMatch) {
+        cg.tiers.push({ col, label: cell, value: parseInt(wtMatch[1]), qty: cell });
+      }
+    }
+    if (cg.tiers.length > 0) channelGroups.push(cg);
+  }
 
-  for (let ri = 1; ri < data.length; ri++) {
+  // Parse data rows
+  for (let ri = headerRowIdx + 1; ri < data.length; ri++) {
     const row = data[ri];
     const c0 = String(row[0] || "").trim();
     const c1 = String(row[1] || "").trim();
-    const c2 = String(row[2] || "").trim();
 
-    if (c2.includes("铁路")) { currentMode = "铁路"; continue; }
-    if (c2.includes("海运")) { currentMode = "海运"; continue; }
-    if (c2.includes("卡航")) { currentMode = "卡航"; continue; }
-    if (c2.includes("包税")) { currentCh = "包税"; continue; }
-    if (c2.includes("自税") || c2.includes("递延")) { currentCh = "自税/递延"; continue; }
+    if (!c1 && !c0) continue;
+    if (c0.includes("下单渠道") || c0.includes("清关费") || c0.includes("报关费") || c0.includes("费用说明") || c0.includes("注意事项") || c0.includes("包装要求") || c0.includes("小货附加费") || c0.includes("运行路线")) continue;
+    if (c1.includes("下单渠道") || c1.includes("清关费") || c1.includes("渠道名称")) continue;
 
-    if (!currentMode || !currentCh) continue;
-    const warehouse = c1.replace(/\r?\n/g, " ").trim();
-    if (!warehouse || warehouse === "仓点") continue;
+    // Extract destination
+    let warehouses = [];
+    let destType = "warehouse";
+    const destText = c1 || c0;
 
-    let dest = warehouse;
-    if (warehouse.includes("四大仓")) dest = "亚马逊四大仓(BHX4/LBA4/BHX8/LBA8)";
-    else if (warehouse.includes("除四大仓")) dest = "英国其他亚马逊仓";
-
-    if (currentCh === "包税") {
-      for (let ti = 0; ti < 3; ti++) {
-        const p = parseFloat(row[3 + ti]);
-        if (!isNaN(p) && p > 0) {
-          results.push(mkr({ c: "英国", cn: `英国${currentMode}-卡派包税`, tm: currentMode, vc: currentMode, vt: [currentMode],
-            dm: "卡派", dc: dest, dt: "warehouse", dr: "英国", bt: "包税",
-            mq: ["21KG+", "51KG+", "100KG+"][ti], mv: [21, 51, 100][ti], p, ss: "英国" }));
+    const whMatch = destText.match(/[A-Z]{2,}\d[\d-]*/g);
+    if (whMatch) {
+      warehouses = whMatch;
+      destType = "warehouse";
+    } else {
+      // Check for country names
+      for (const cn of EU_COUNTRIES) {
+        if (destText === cn || destText.startsWith(cn)) {
+          warehouses = [cn];
+          destType = "country";
+          break;
         }
       }
-    } else {
-      for (let ti = 0; ti < 3; ti++) {
-        const p = parseFloat(row[6 + ti]);
-        if (!isNaN(p) && p > 0) {
-          results.push(mkr({ c: "英国", cn: `英国${currentMode}-卡派自税`, tm: currentMode, vc: currentMode, vt: [currentMode],
-            dm: "卡派", dc: dest, dt: "warehouse", dr: "英国", bt: "自税", tx: "自税",
-            mq: ["21KG+", "51KG+", "100KG+"][ti], mv: [21, 51, 100][ti], p, ss: "英国" }));
+      if (warehouses.length === 0) {
+        // Multi-country
+        const found = [];
+        for (const cn of EU_COUNTRIES) {
+          if (destText.includes(cn)) found.push(cn);
+        }
+        if (found.length > 0) {
+          warehouses = found;
+          destType = "country";
+        } else if (destText.includes("四大仓")) {
+          warehouses = ["亚马逊四大仓(BHX4/LBA4/BHX8/LBA8)"];
+          destType = "warehouse";
+        } else if (destText.includes("除四大仓")) {
+          warehouses = ["英国其他亚马逊仓"];
+          destType = "warehouse";
+        } else if (destText.includes("英国全部")) {
+          warehouses = ["英国全部亚马逊仓"];
+          destType = "warehouse";
+        } else if (destText.match(/[A-Z][a-z]/) && destText.length > 2) {
+          warehouses = [destText.slice(0, 50)];
+          destType = "country";
+        } else {
+          continue;
+        }
+      }
+    }
+
+    // Extract transit time from nearby columns
+    let transitDesc = "";
+    let transitMin = null, transitMax = null;
+    for (let c = channelGroups[channelGroups.length-1]?.endCol + 1 || 7; c < Math.min(row.length, 14); c++) {
+      const cell = String(row[c] || "").trim();
+      if (cell && (cell.includes("天") || cell.includes("日") || cell.includes("工作日"))) {
+        transitDesc = cell;
+        const tm_ = cell.match(/(\d+)\s*[-–~]*\s*(\d+)/);
+        if (tm_) { transitMin = parseInt(tm_[1]); transitMax = parseInt(tm_[2]); }
+        break;
+      }
+    }
+
+    for (const cg of channelGroups) {
+      for (const tier of cg.tiers) {
+        const price = parseFloat(row[tier.col]);
+        if (isNaN(price) || price <= 0 || price > 99999) continue;
+
+        for (const wh of warehouses) {
+          results.push(mkr({
+            c: country, cn: cg.channelName, tm, vc: tm, vt: [tm], dm,
+            dc: wh, dt: destType, dr: wh,
+            bt: cg.taxMode, tx: cg.taxMode,
+            mq: tier.qty, mv: tier.value, p: price,
+            td: transitDesc, tn: transitMin, tx2: transitMax, ss: sheetName,
+          }));
         }
       }
     }
   }
+
   return results;
 }
 
-// ── 美国空派 ──
-function parseUSAir(ws) {
+/**
+ * 英国 Sheet 专用解析 (多种渠道+税模式混合)
+ */
+function parseUKSheet(ws) {
   const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
   if (data.length < 5) return [];
   const results = [];
-  let currentCh = "";
 
-  for (let ri = 3; ri < data.length; ri++) {
+  // R1: ["派送方式","仓点","铁路","",...]
+  // R2: ["","","英国铁路","","","","","","中英快铁","",...]
+  // R3: ["","","包税","","","自税/递延","","","包税","","","自税/递延"]
+  // R4: ["","","21KG+","51KG+","100KG+","21KG+","51KG+","100KG+","21KG+","51KG+","100KG+","21KG+"]
+  // R5+: data
+
+  const r2 = data[2] || [];
+  const r3 = data[3] || [];
+  const r4 = data[4] || [];
+
+  // Identify channel groups
+  const groups = [];
+  let cg = null;
+  for (let col = 2; col < Math.min(r4.length, 14); col++) {
+    const r2cell = String(r2[col] || "").trim();
+    const r3cell = String(r3[col] || "").trim();
+    const r4cell = String(r4[col] || "").trim();
+
+    if (r2cell && (r2cell.includes("铁路") || r2cell.includes("快铁") || r2cell.includes("海运") || r2cell.includes("卡航"))) {
+      if (cg) groups.push(cg);
+      cg = { startCol: col, endCol: col, tiers: [], name: r2cell, taxMode: r3cell || "包税" };
+    }
+    if (cg && r4cell.match(/\d+\s*KG\+/i)) {
+      const mv = parseInt(r4cell.match(/(\d+)/)[1]);
+      cg.tiers.push({ col, label: r4cell, value: mv, qty: r4cell });
+      cg.endCol = col;
+    }
+  }
+  if (cg) groups.push(cg);
+
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i];
+    g.channelName = `英国${g.name}-卡派${g.taxMode}`;
+  }
+
+  for (let ri = 5; ri < data.length; ri++) {
     const row = data[ri];
+    const c0 = String(row[0] || "").trim();
     const c1 = String(row[1] || "").trim();
-    const c2 = String(row[2] || "").trim();
+    if (!c1 || c0.includes("下单渠道") || c0.includes("清关费")) continue;
 
-    if (c1.match(/A\d+/) || c1.includes("空派")) { currentCh = c1; continue; }
-    if (!currentCh || !c2) continue;
+    const dm = c0.includes("快递") ? "快递派" : "卡派";
+    let warehouses = [];
+    let destType = "warehouse";
 
-    let dr = "";
-    if (c2.includes("8.9") || c2.includes("西岸")) dr = "美西";
-    else if (c2.includes("4.5.6.7") || c2.includes("中部")) dr = "美中";
-    else if (c2.includes("0.1.2.3") || c2.includes("东部")) dr = "美东";
-    else continue;
+    if (c1.includes("四大仓")) {
+      warehouses = ["BHX4","LBA4","BHX8","LBA8"];
+    } else if (c1.includes("除四大仓")) {
+      warehouses = ["英国其他亚马逊仓"];
+    } else if (c1.includes("全部亚马逊")) {
+      warehouses = ["英国全部亚马逊仓"];
+    } else if (c1.match(/[A-Z]{2,}\d/)) {
+      warehouses = [c1.match(/[A-Z]{2,}\d/)[0]];
+    } else {
+      warehouses = ["英国"];
+      destType = "country";
+    }
 
-    const tiers = [{ c: 3, q: "21KG+", v: 21 }, { c: 4, q: "45KG+", v: 45 }, { c: 5, q: "71KG+", v: 71 }, { c: 6, q: "101KG+", v: 101 }];
-    for (const t of tiers) {
-      const p = parseFloat(row[t.c]);
-      if (!isNaN(p) && p > 0) {
-        results.push(mkr({ c: "美国", cn: `美国空派-${currentCh}`, tm: "空运", vc: "空运", vt: ["空运"],
-          dm: "快递派", dc: dr, dt: "region", dr, bt: "包税", mq: t.q, mv: t.v, p, ss: "美国空派" }));
+    let transitDesc = "";
+    let transitMin = null, transitMax = null;
+
+    for (const g of groups) {
+      for (const tier of g.tiers) {
+        const price = parseFloat(row[tier.col]);
+        if (isNaN(price) || price <= 0 || price > 99999) continue;
+
+        for (const wh of warehouses) {
+          results.push(mkr({
+            c: "英国", cn: g.channelName.replace("卡派", dm === "快递派" ? "快递派" : "卡派"),
+            tm: g.name.includes("铁路") || g.name.includes("快铁") ? "铁路" : g.name.includes("海运") ? "海运" : "卡航",
+            vc: g.name, vt: [g.name], dm,
+            dc: wh, dt: destType, dr: "英国",
+            bt: g.taxMode, tx: g.taxMode,
+            mq: tier.qty, mv: tier.value, p: price,
+            td: transitDesc, tn: transitMin, tx2: transitMax, ss: "英国",
+          }));
+        }
       }
     }
   }
@@ -171,21 +344,25 @@ function parseKaixin(filePath) {
   const wb = XLSX.readFile(filePath);
   const all = [];
 
-  const configs = [
-    { name: "美国空派", fn: parseUSAir },
-    { name: "欧洲-快递派", fn: (ws) => parseEUDelivery(ws, "欧洲-快递派") },
-    { name: "英国", fn: parseUK },
-  ];
+  const skipSheets = ["目录", "装柜计划", "时效参考", "大货中转", "海外仓服务", "凯鑫发货必读", "产品附加费"];
 
-  for (const cfg of configs) {
-    if (wb.SheetNames.includes(cfg.name)) {
-      try {
-        const r = cfg.fn(wb.Sheets[cfg.name]);
-        console.log(`  [${cfg.name}] ${r.length} 条`);
-        all.push(...r);
-      } catch (err) { console.error(`  [${cfg.name}] 失败: ${err.message}`); }
+  for (const sheetName of wb.SheetNames) {
+    if (skipSheets.some(k => sheetName.includes(k))) continue;
+
+    try {
+      let results = [];
+      if (sheetName === "英国") {
+        results = parseUKSheet(wb.Sheets[sheetName]);
+      } else {
+        results = parseGroupedSheet(wb.Sheets[sheetName], sheetName, {});
+      }
+      console.log(`  [${sheetName}] ${results.length} 条`);
+      all.push(...results);
+    } catch (err) {
+      console.error(`  [${sheetName}] 失败: ${err.message}`);
     }
   }
+
   console.log(`[凯鑫] 总计 ${all.length} 条`);
   return all;
 }

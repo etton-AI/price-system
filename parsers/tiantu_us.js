@@ -344,6 +344,172 @@ function parseTiantuWarehouseSheet(ws, sheetName) {
   return results;
 }
 
+// ── 解析加拿大商业/私人地址 Sheet ──
+// 结构: R3=["城市","省份","区域","渠道名"...], R5=城市列, R6=重量段, R7+=数据
+function parseTiantuCanadaAddressSheet(ws, sheetName) {
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+  if (data.length < 8) return [];
+  const results = [];
+
+  const titleRow = data[3] || [];
+  const cityRow = data[5] || [];
+  const weightRow = data[6] || [];
+
+  // 找渠道 (col3+)
+  const channels = [];
+  for (let col = 3; col < titleRow.length; col++) {
+    const cell = String(titleRow[col] || "").trim();
+    if (cell && cell.length > 3) {
+      const cityCell = String(cityRow[col] || "").trim();
+      const weightCell = String(weightRow[col] || "").trim();
+      if (cityCell) {
+        channels.push({
+          name: cell,
+          col,
+          cities: matchCity(cityCell),
+          region: cityCell,
+          minQty: weightCell.replace("+", "+") || "300KG+",
+          minQtyValue: parseInt(weightCell) || 300,
+        });
+      }
+    }
+  }
+
+  for (const ch of channels) {
+    const meta = inferTiantuMeta(ch.name);
+
+    for (let ri = 7; ri < data.length; ri++) {
+      const row = data[ri];
+      const city = String(row[0] || "").trim();
+      const province = String(row[1] || "").trim();
+      const zone = String(row[2] || "").trim();
+      if (!city) continue;
+
+      const price = parseFloat(row[ch.col]);
+      if (isNaN(price) || price <= 0) continue;
+
+      const destLabel = [city, province].filter(Boolean).join(", ");
+      results.push({
+        supplier: SUPPLIER,
+        country: "加拿大",
+        channel_name: ch.name,
+        speed_tier: meta.speed_tier,
+        vessel_config: meta.vessel_config,
+        vessel_tags: extractVesselTags(meta.vessel_config),
+        delivery_method: meta.delivery_method,
+        destination_type: "address",
+        destination_code: destLabel.slice(0, 50),
+        destination_region: "加拿大",
+        origin_region: ch.region,
+        origin_cities: ch.cities,
+        billing_type: "含税KG",
+        min_quantity: ch.minQty,
+        min_quantity_value: ch.minQtyValue,
+        unit_price: price,
+        price_unit: "元/KG",
+        transit_time_min: null,
+        transit_time_max: null,
+        transit_time_desc: "",
+        claim_rule: "",
+        effective_date: "",
+        source_sheet: sheetName,
+      });
+    }
+  }
+  return results;
+}
+
+// ── 解析加拿大小包 Sheet ──
+function parseTiantuCanadaSmallPack(ws, sheetName) {
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+  if (data.length < 8) return [];
+  const results = [];
+
+  // R3: title, R4-R5: header info, R6: city row with "首重" "续重" split
+  const cityRow = data[5] || [];
+  const firstWeightRow = data[6] || [];
+  const contWeightRow = data[7] || [];
+
+  // 小包 R3 如 "美转加小包 体积/6000-加东（含私人地址住宅费）（美转加正班）"
+  const channelName = String(data[3]?.[0] || data[3]?.[1] || sheetName).trim();
+
+  // Find city columns (starting from col1, first weight and continued weight alternate?)
+  // Format: col1=firstWeightCity1, contWeight at row7
+  const cityColumns = [];
+  for (let col = 1; col < Math.min(cityRow.length, firstWeightRow.length); col++) {
+    const cityCell = String(cityRow[col] || "").trim();
+    if (cityCell && cityCell.length > 1) {
+      const fwPrice = parseFloat(firstWeightRow[col]);
+      const cwPrice = parseFloat(contWeightRow[col]);
+      cityColumns.push({
+        col,
+        cities: matchCity(cityCell),
+        region: cityCell,
+        firstWeightPrice: !isNaN(fwPrice) ? fwPrice : null,
+        contWeightPrice: !isNaN(cwPrice) ? cwPrice : null,
+      });
+    }
+  }
+
+  for (const cc of cityColumns) {
+    if (cc.firstWeightPrice && cc.firstWeightPrice > 0) {
+      results.push({
+        supplier: SUPPLIER,
+        country: "加拿大",
+        channel_name: channelName,
+        speed_tier: "",
+        vessel_config: "美转加",
+        vessel_tags: ["美转加"],
+        delivery_method: "快递派",
+        destination_type: "address",
+        destination_code: "加拿大",
+        destination_region: "加拿大",
+        origin_region: cc.region,
+        origin_cities: cc.cities,
+        billing_type: "含税KG",
+        min_quantity: "首重1KG",
+        min_quantity_value: 1,
+        unit_price: cc.firstWeightPrice,
+        price_unit: "元/首重",
+        transit_time_min: null,
+        transit_time_max: null,
+        transit_time_desc: "",
+        claim_rule: "",
+        effective_date: "",
+        source_sheet: sheetName,
+      });
+    }
+    if (cc.contWeightPrice && cc.contWeightPrice > 0) {
+      results.push({
+        supplier: SUPPLIER,
+        country: "加拿大",
+        channel_name: channelName,
+        speed_tier: "",
+        vessel_config: "美转加",
+        vessel_tags: ["美转加"],
+        delivery_method: "快递派",
+        destination_type: "address",
+        destination_code: "加拿大",
+        destination_region: "加拿大",
+        origin_region: cc.region,
+        origin_cities: cc.cities,
+        billing_type: "含税KG",
+        min_quantity: "续重1KG+",
+        min_quantity_value: 2,
+        unit_price: cc.contWeightPrice,
+        price_unit: "元/KG",
+        transit_time_min: null,
+        transit_time_max: null,
+        transit_time_desc: "",
+        claim_rule: "",
+        effective_date: "",
+        source_sheet: sheetName,
+      });
+    }
+  }
+  return results;
+}
+
 // ── 主解析入口 ──────────────────────────────────
 function parseTiantu(filePath) {
   console.log("[天图] 开始解析:", filePath);
@@ -371,6 +537,57 @@ function parseTiantu(filePath) {
       allResults.push(...results);
     } else {
       console.log(`  [${sn}] Sheet不存在，跳过`);
+    }
+  }
+
+  // 加拿大海运 Sheets（结构与美线仓库Sheet一致）
+  const caSheets = ["加拿大直航-普船系列", "加拿大普船-特惠系列"];
+  for (const sn of caSheets) {
+    if (wb.SheetNames.includes(sn)) {
+      const results = parseTiantuWarehouseSheet(wb.Sheets[sn], sn);
+      for (const r of results) {
+        r.country = "加拿大";
+        r.destination_region = "加拿大";
+      }
+      console.log(`  [${sn}] ${results.length} 条 → 加拿大`);
+      allResults.push(...results);
+    }
+  }
+
+  // 加拿大商业/私人地址 Sheets
+  const caAddrSheets = [
+    "加拿大多伦多商业、私人地址系列",
+    "加拿大卡尔加里商业、私人地址系列",
+  ];
+  for (const sn of caAddrSheets) {
+    if (wb.SheetNames.includes(sn)) {
+      const results = parseTiantuCanadaAddressSheet(wb.Sheets[sn], sn);
+      console.log(`  [${sn}] ${results.length} 条 → 加拿大`);
+      allResults.push(...results);
+    }
+  }
+
+  // 加拿大小包
+  const smallPackSheet = wb.SheetNames.find((n) => n.includes("加拿大小包"));
+  if (smallPackSheet) {
+    const results = parseTiantuCanadaSmallPack(wb.Sheets[smallPackSheet], smallPackSheet);
+    console.log(`  [${smallPackSheet}] ${results.length} 条 → 加拿大`);
+    allResults.push(...results);
+  }
+
+  // 英国 Sheets — 复用 tiantu_uk 解析器（合并文件含英国数据）
+  const ukSheetNames = [
+    "英国铁运专线(18-23)", "英国中英专车(20-25)", "苏新号-英国卡航20日达",
+    "英国海运-卡派(23-40) ", "英国海运-海派(23-40)", "英国商私地址",
+  ];
+  if (ukSheetNames.some((sn) => wb.SheetNames.includes(sn))) {
+    try {
+      const { parseTiantuUK } = require("./tiantu_uk");
+      const ukResults = parseTiantuUK(filePath);
+      console.log(`[天图] UK 线路: ${ukResults.length} 条`);
+      allResults.push(...ukResults);
+    } catch (err) {
+      console.log(`[天图] UK 解析跳过: ${err.message}`);
     }
   }
 

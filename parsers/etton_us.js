@@ -7,6 +7,7 @@
  */
 
 const XLSX = require("xlsx");
+const { detectCountry } = require("./country-detector");
 
 // ── 常量 ──────────────────────────────────────────
 const SUPPLIER = "易通ETTON";
@@ -681,8 +682,231 @@ function parseETTON(filePath) {
     }
   }
 
+  // ── 加拿大 + 澳洲 Sheets（自动检测）──
+  const caAuSheets = wb.SheetNames.filter((sn) => {
+    const c = detectCountry(sn);
+    return c === "加拿大" || c === "澳大利亚" || sn.includes("澳洲");
+  });
+  // 也检查文件名的国家
+  const hasCA = caAuSheets.length > 0;
+  // 如果没有按国家检测到，检查Sheet名关键词
+  const extraSheets = wb.SheetNames.filter((sn) =>
+    sn.includes("美转加") || sn.includes("澳洲") || sn.includes("加拿大")
+  );
+  const allExtraSheets = [...new Set([...caAuSheets, ...extraSheets])];
+
+  for (const sn of allExtraSheets) {
+    // Skip metadata sheets
+    if (sn.includes("须知") || sn.includes("仓库列表") || sn.includes("偏远") || sn.includes("增值服务")
+      || sn.includes("分区表") || sn.includes("区域表") || sn.includes("DG货物") || sn.includes("船期")
+      || sn.includes("查询") || sn.includes("目录")) continue;
+
+    try {
+      const country = detectCountry(sn) === "加拿大" || sn.includes("加拿大") || sn.includes("美转加") ? "加拿大"
+        : detectCountry(sn) === "澳大利亚" || sn.includes("澳洲") ? "澳大利亚" : "加拿大";
+      // Skip 香港UPS红单 for now
+      if (sn.includes("香港UPS")) continue;
+
+      const results = parseETTON_CA_AU(wb.Sheets[sn], sn, country, {});
+      console.log(`  [${sn}] ${results.length} 条 → ${country}`);
+      allResults.push(...results);
+    } catch (err) {
+      console.error(`  [${sn}] 解析失败: ${err.message}`);
+    }
+  }
+
   console.log(`[ETTON] 总计解析 ${allResults.length} 条价格记录`);
   return allResults;
+}
+
+// ── 加拿大+澳洲解析器 ──────────────────────────────
+// ETTON 加拿大澳洲价格表格式: R1-R2=渠道名+船司, R3-R4=城市+重量段表头, R5+=数据行
+function parseETTON_CA_AU(ws, sheetName, countryOverride, defaults) {
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+  if (data.length < 6) return [];
+  const results = [];
+
+  // Extract channel name from R1
+  let channelName = "";
+  const r1 = data[1] || [];
+  const r2 = data[2] || [];
+  for (let i = 1; i < r1.length; i++) {
+    const c = String(r1[i] || "").trim();
+    if (c && c.length > 2 && !c.includes("DISPIMG")) { channelName = c; break; }
+  }
+  if (!channelName) {
+    // Try from R2
+    for (let i = 1; i < r2.length; i++) {
+      const c = String(r2[i] || "").trim();
+      if (c && c.length > 3 && !c.includes("DISPIMG")) { channelName = c; break; }
+    }
+  }
+  if (!channelName) channelName = sheetName;
+
+  // Extract vessel info from R2
+  let vesselConfig = "";
+  for (let i = 1; i < r2.length; i++) {
+    const c = String(r2[i] || "").trim();
+    if (c && (c.includes("美森") || c.includes("OA") || c.includes("COSCO") || c.includes("船司") || c.includes("ERS") || c.includes("统配"))) {
+      vesselConfig = c.replace("使用船司", "").trim();
+      break;
+    }
+  }
+
+  // Find city groups from R3-R5
+  // R3 typically has city names, R4/R5 has weight tier labels
+  const r3 = data[3] || [];
+  const r4 = data[4] || [];
+  const r5 = data[5] || [];
+
+  // Detect city columns: look for Chinese city names or region labels in R3
+  const cityGroups = [];
+  let currentCity = null;
+  for (let col = 1; col < Math.min(r3.length, 20); col++) {
+    const cell = String(r3[col] || "").trim();
+    if (cell && (cell.includes("/") || cell.includes("东莞") || cell.includes("嘉兴") || cell.includes("汕头") || cell.includes("武汉") || cell.includes("青岛") || cell.includes("华东") || cell.includes("华南"))) {
+      if (currentCity) {
+        // Finish previous city group
+        currentCity.endCol = col - 1;
+        cityGroups.push(currentCity);
+      }
+      currentCity = { name: cell, startCol: col, endCol: col };
+    }
+  }
+  if (currentCity) {
+    currentCity.endCol = Math.min(r3.length, r4.length) - 1;
+    cityGroups.push(currentCity);
+  }
+
+  // If no cities detected, use default single group
+  if (cityGroups.length === 0) {
+    cityGroups.push({ name: "华南", startCol: 2, endCol: Math.min(r4.length - 1, 10) });
+  }
+
+  // For each city group, detect weight tiers from R4/R5
+  for (const cg of cityGroups) {
+    cg.tiers = [];
+    for (let col = cg.startCol; col <= cg.endCol; col++) {
+      const r4cell = String(r4[col] || "").trim();
+      const r5cell = col < r5.length ? String(r5[col] || "").trim() : "";
+
+      // Determine billing type and weight/volume tier
+      let tierLabel = r4cell || r5cell;
+      let billingType = "含税KG";
+      let priceUnit = "元/KG";
+
+      if (r4cell.includes("不含税") || r4cell.includes("不包税") || r5cell.includes("CBM") || r5cell.includes("cbm")) {
+        billingType = "不含税CBM";
+        priceUnit = "元/CBM";
+        tierLabel = r5cell || r4cell;
+      } else if (r4cell.includes("含税") || r5cell.includes("KG+") || r5cell.includes("kg+")) {
+        billingType = "含税KG";
+        tierLabel = r5cell || r4cell;
+      }
+
+      // Extract weight/volume value
+      let minQtyVal = 21;
+      const qtyMatch = String(tierLabel).match(/(\d+)\s*(?:KG\+|kg\+|CBM\+|cbm\+)/i);
+      if (qtyMatch) minQtyVal = parseInt(qtyMatch[1]);
+
+      if (tierLabel && tierLabel.length > 0 && tierLabel !== "仓库代码" && tierLabel !== "含税" && tierLabel !== "不含税") {
+        cg.tiers.push({ col, label: tierLabel, billingType, priceUnit, minQtyVal,
+          minQty: tierLabel.includes("CBM") || tierLabel.includes("cbm") ? tierLabel : tierLabel.includes("KG") ? tierLabel : minQtyVal + "KG+" });
+      }
+    }
+    // If no tiers found, use default
+    if (cg.tiers.length === 0) {
+      for (let col = cg.startCol; col <= cg.endCol; col++) {
+        cg.tiers.push({ col, label: "21KG+", billingType: "含税KG", priceUnit: "元/KG", minQtyVal: 21, minQty: "21KG+" });
+      }
+    }
+  }
+
+  // Determine country
+  let country = countryOverride || "美国";
+  if (sheetName.includes("加拿大") || sheetName.includes("美转加")) country = "加拿大";
+  if (sheetName.includes("澳洲") || sheetName.includes("澳大利亚")) country = "澳大利亚";
+
+  // Transport mode
+  let transportMode = defaults.tm || "海运";
+  if (channelName.includes("空运") || sheetName.includes("空运")) transportMode = "空运";
+  if (channelName.includes("快递") || channelName.includes("UPS") || channelName.includes("红单")) transportMode = "快递";
+
+  // Delivery method
+  let deliveryMethod = "卡派";
+  if (channelName.includes("海派") || channelName.includes("UPS派") || channelName.includes("快递")) deliveryMethod = "快递派";
+  if (channelName.includes("DG")) deliveryMethod = "卡派";
+
+  // Find transit/claim columns (usually at the end)
+  let transitCol = -1, claimCol = -1;
+  for (let col = cityGroups[cityGroups.length-1]?.endCol + 1 || 8; col < Math.min(r3.length, 15); col++) {
+    const c = String(r3[col] || "").trim();
+    if (c.includes("时效") || c.includes("签收")) transitCol = col;
+    if (c.includes("赔付") || c.includes("赔偿")) claimCol = col;
+  }
+
+  // Parse data rows
+  for (let ri = (r5[0] && String(r5[0]).includes("仓库")) ? 6 : 5; ri < data.length; ri++) {
+    const row = data[ri];
+    const whCell = String(row[0] || row[1] || "").trim();
+    if (!whCell || whCell.length < 3) continue;
+    if (whCell.includes("仓库类型") || whCell.includes("仓库代码") || whCell.includes("DISPIMG")) continue;
+
+    // Extract warehouse codes
+    let warehouses = [];
+    const whMatch = whCell.match(/[A-Z]{2,}\d/g);
+    if (whMatch) {
+      warehouses = whMatch;
+    } else if (whCell.includes("(") || whCell.includes("（")) {
+      // "多伦多(YYZ/YOO)" → extract codes from parentheses
+      const pm = whCell.match(/[（(]([^)）]+)[)）]/);
+      if (pm) warehouses = pm[1].split("/").map(s => s.trim()).filter(s => s.match(/[A-Z]+\d/));
+      if (warehouses.length === 0) warehouses = [whCell.split(/[（(]/)[0].trim().slice(0, 40)];
+    } else {
+      warehouses = [whCell.slice(0, 40)];
+    }
+
+    const transitText = transitCol >= 0 ? String(row[transitCol] || "").trim() : "";
+    const claimText = claimCol >= 0 ? String(row[claimCol] || "").trim() : "";
+    const transitMin = transitText.match(/(\d+)/) ? parseInt(transitText.match(/(\d+)/)[1]) : null;
+    const transitMax = transitText.match(/(\d+)[-–](\d+)/) ? parseInt(transitText.match(/(\d+)[-–](\d+)/)[2]) : transitMin;
+
+    for (const cg of cityGroups) {
+      for (const tier of cg.tiers) {
+        const price = parseFloat(row[tier.col]);
+        if (isNaN(price) || price <= 0 || price > 99999) continue;
+
+        for (const wh of warehouses) {
+          results.push({
+            supplier: SUPPLIER,
+            country,
+            channel_name: channelName,
+            speed_tier: "",
+            vessel_config: vesselConfig,
+            vessel_tags: vesselConfig ? extractVesselTags(vesselConfig) : [],
+            delivery_method: deliveryMethod,
+            destination_type: "warehouse",
+            destination_code: wh,
+            destination_region: country,
+            origin_region: cg.name,
+            origin_cities: cg.name.split("/").map((s) => s.trim()),
+            billing_type: tier.billingType,
+            min_quantity: tier.minQty,
+            min_quantity_value: tier.minQtyVal,
+            unit_price: price,
+            price_unit: tier.priceUnit,
+            transit_time_min: transitMin,
+            transit_time_max: transitMax,
+            transit_time_desc: transitText,
+            claim_rule: claimText,
+            effective_date: "",
+            source_sheet: sheetName,
+          });
+        }
+      }
+    }
+  }
+  return results;
 }
 
 module.exports = { parseETTON };
