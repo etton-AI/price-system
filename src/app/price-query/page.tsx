@@ -237,7 +237,13 @@ export default function PriceQueryPage() {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      params.set("country", country);
+      // DG专线: 跨国家过滤, 传 dg=1 + country=美国 (作为基础)
+      if (country === "DG专线") {
+        params.set("dg", "1");
+        params.set("country", "美国");
+      } else {
+        params.set("country", country);
+      }
       if (transportMode !== "全部") params.set("transport_mode", transportMode);
       if (dest.trim()) params.set("dest", dest.trim());
       if (origin.trim()) params.set("origin", origin.trim());
