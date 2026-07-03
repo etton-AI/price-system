@@ -22,6 +22,7 @@ interface QueryParams {
   top?: number;
   best?: boolean;
   country?: string;
+  dg?: boolean;
   transport_mode?: string;
 }
 
@@ -103,6 +104,8 @@ function getSupplierKey(supplier: string): string {
   if (s.includes("星链") || s.includes("xinglian")) return "xinglian";
   if (s.includes("心一") || s.includes("xinyi")) return "xinyi";
   if (s.includes("航乐") || s.includes("hangle") || s.includes("yue")) return "hangle";
+  if (s.includes("劲港") || s.includes("jingang")) return "jingang";
+  if (s.includes("瑞秋") || s.includes("ruiqiu")) return "ruiqiu";
   return "";
 }
 
@@ -118,6 +121,15 @@ function query(params: QueryParams): { results: PriceEntry[]; total: number; bes
       const rc = (r as PriceEntryWithCountry).country || "";
       if (country === "欧线" || country === "欧洲") return rc === "欧线" || rc === "欧洲";
       return rc === country;
+    });
+  }
+
+  // 0.3 DG 过滤: 筛选 DG/纯电线路
+  if (params.dg) {
+    results = results.filter((r) => {
+      const cn = (r.channel_name || "").toUpperCase();
+      const dm = (r.delivery_method || "").toUpperCase();
+      return cn.includes("DG") || cn.includes("纯电") || dm.includes("DG");
     });
   }
 
@@ -227,6 +239,8 @@ function query(params: QueryParams): { results: PriceEntry[]; total: number; bes
       "凯鑫": "凯鑫", "kaixin": "凯鑫",
       "新胜": "新胜", "xinsheng": "新胜",
       "美琦": "美琦", "meiqi": "美琦",
+      "劲港": "劲港", "jingang": "劲港",
+      "瑞秋": "瑞秋", "ruiqiu": "瑞秋",
     };
     const targetSuppliers = suppliers.map(s => supplierMap[s] || s).filter(Boolean);
     if (targetSuppliers.length > 0) {
@@ -263,6 +277,7 @@ export async function GET(request: NextRequest) {
     const params: QueryParams = {
       dest: searchParams.get("dest") || undefined,
       country: searchParams.get("country") || "美国",
+      dg: searchParams.get("dg") === "1" || searchParams.get("dg") === "true",
       origin: searchParams.get("origin") || undefined,
       weight: searchParams.get("weight") ? parseFloat(searchParams.get("weight")!) : undefined,
       vessel: searchParams.get("vessel") || undefined,

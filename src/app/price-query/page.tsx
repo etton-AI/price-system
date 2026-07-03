@@ -91,9 +91,23 @@ const LINE_CONFIG: Record<string, {
     warehouses: ["SYD1", "SYD3", "MEL1", "MEL5", "BNE1", "PER1", "ADL1"],
     supplierDesc: "星链 · 皓鹏 · ETTON",
   },
+  "日本": {
+    label: "日本线",
+    icon: "🇯🇵",
+    transportModes: ["全部", "海运", "空运"],
+    warehouses: ["NRT1", "NRT2", "NRT5", "KIX1", "KIX2", "HND1", "NGO1", "FUK1"],
+    supplierDesc: "瑞秋 · 天图",
+  },
+  "DG专线": {
+    label: "DG专线",
+    icon: "⚡",
+    transportModes: ["全部", "海运", "空运"],
+    warehouses: ["ONT8", "LGB8", "LAX9", "SBD1", "FTW1", "DTM2", "WRO5", "YYZ1"],
+    supplierDesc: "ETTON · 天图 · 皓鹏 · 瑞秋 · 美琦 · 英美 · 凯鑫",
+  },
 };
 
-const ALL_SUPPLIERS = ["ETTON易通", "天图通逊", "英美跨境", "皓辉国际", "皓鹏国际", "星链专线", "心一供应链", "航乐国际", "丰运跨境", "华威尔", "凯鑫科技", "新胜供应链", "美琦国际"];
+const ALL_SUPPLIERS = ["ETTON易通", "天图通逊", "英美跨境", "皓辉国际", "皓鹏国际", "星链专线", "心一供应链", "航乐国际", "丰运跨境", "华威尔", "凯鑫科技", "新胜供应链", "美琦国际", "劲港物流", "瑞秋物流"];
 
 // ── 常用城市 ──
 const POPULAR_CITIES = ["深圳", "东莞", "广州", "义乌", "上海", "宁波", "厦门", "泉州", "武汉"];
@@ -116,6 +130,8 @@ function supplierBadge(s: string) {
   if (s.includes("凯鑫")) return { bg: "bg-violet-100", text: "text-violet-700", border: "border-violet-300" };
   if (s.includes("新胜")) return { bg: "bg-sky-100", text: "text-sky-700", border: "border-sky-300" };
   if (s.includes("美琦")) return { bg: "bg-indigo-100", text: "text-indigo-700", border: "border-indigo-300" };
+  if (s.includes("劲港")) return { bg: "bg-emerald-100", text: "text-emerald-700", border: "border-emerald-300" };
+  if (s.includes("瑞秋")) return { bg: "bg-fuchsia-100", text: "text-fuchsia-700", border: "border-fuchsia-300" };
   return { bg: "bg-gray-100", text: "text-gray-700", border: "border-gray-300" };
 }
 
@@ -175,6 +191,8 @@ export default function PriceQueryPage() {
         if (country === "墨西哥") return meta.countries.includes("墨西哥");
         if (country === "巴西") return meta.countries.includes("巴西");
         if (country === "澳大利亚") return meta.countries.includes("澳大利亚");
+        if (country === "日本") return meta.countries.includes("日本");
+        if (country === "DG专线") return true; // DG跨国家，显示所有供应商
       }
     }
     return false;
