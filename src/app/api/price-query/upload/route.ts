@@ -10,10 +10,12 @@ import { refreshCache, getDataPath, type PriceEntry } from "@/lib/price-store";
 import fs from "fs";
 import path from "path";
 import os from "os";
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-import { createRequire } from "module";
 
-const nodeRequire = createRequire(import.meta.url);
+// 绕过 Webpack 的 require — __non_webpack_require__ 是 Next.js 提供的原生 Node require
+const nativeRequire: NodeRequire =
+  typeof (globalThis as Record<string, unknown>).__non_webpack_require__ === "function"
+    ? (globalThis as Record<string, unknown>).__non_webpack_require__ as NodeRequire
+    : eval("require");
 
 /** 与 build_db.js 一致的供应商识别 */
 function identifySupplier(fileName: string): string | null {
@@ -120,7 +122,7 @@ function parseWithNode(filePath: string, supplier: string): PriceEntry[] {
     if (!entry) continue;
 
     try {
-      const mod = nodeRequire(path.join(parsersDir, entry.file));
+      const mod = nativeRequire(path.join(parsersDir, entry.file));
       const parseFn = mod[entry.exportName];
       if (typeof parseFn !== "function") {
         console.warn(`[upload] ⚠ ${entry.file} 未导出 ${entry.exportName}，跳过`);
