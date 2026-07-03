@@ -267,13 +267,31 @@ function query(params: QueryParams): { results: PriceEntry[]; total: number; bes
     results = Object.values(grouped);
   }
 
-  // 4. 船司
+  // 4. 船司（支持别名：美森→CLX/MAX, CLX→美森/Matson 等）
   if (params.vessel) {
     const v = params.vessel.toLowerCase();
+    const VESSEL_ALIASES: Record<string, string[]> = {
+      "美森": ["clx", "max", "matson"],
+      "matson": ["美森", "clx", "max"],
+      "clx": ["美森", "matson"],
+      "max": ["美森", "matson"],
+      "exx": ["合德"],
+      "以星": ["zim"],
+      "zim": ["以星"],
+      "cosco": ["oa"],
+      "oa": ["cosco", "msc", "whl"],
+      "msc": ["oa", "whl"],
+      "whl": ["oa", "msc"],
+    };
+    const aliases = VESSEL_ALIASES[v] || [];
     results = results.filter((r) => {
       const vesselConfig = (r.vessel_config || "").toLowerCase();
       const channelName = (r.channel_name || "").toLowerCase();
-      return vesselConfig.includes(v) || channelName.includes(v);
+      if (vesselConfig.includes(v) || channelName.includes(v)) return true;
+      for (const alias of aliases) {
+        if (vesselConfig.includes(alias) || channelName.includes(alias)) return true;
+      }
+      return false;
     });
   }
 
