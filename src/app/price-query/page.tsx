@@ -107,7 +107,7 @@ const LINE_CONFIG: Record<string, {
   },
 };
 
-const ALL_SUPPLIERS = ["ETTON易通", "天图通逊", "英美跨境", "皓辉国际", "皓鹏国际", "星链专线", "心一供应链", "航乐国际", "丰运跨境", "华威尔", "凯鑫科技", "新胜供应链", "美琦国际", "劲港物流", "瑞秋物流"];
+const ALL_SUPPLIERS = ["ETTON易通", "天图通逊", "英美跨境", "皓辉国际", "皓鹏国际", "星链专线", "心一供应链", "航乐国际", "丰运跨境", "华威尔", "凯鑫科技", "新胜供应链", "美琦国际", "劲港物流", "瑞秋物流", "纽酷国际", "博创兴", "HYE环洋"];
 
 // ── 常用城市 ──
 const POPULAR_CITIES = ["深圳", "东莞", "广州", "义乌", "上海", "宁波", "厦门", "泉州", "武汉"];
@@ -132,6 +132,9 @@ function supplierBadge(s: string) {
   if (s.includes("美琦")) return { bg: "bg-indigo-100", text: "text-indigo-700", border: "border-indigo-300" };
   if (s.includes("劲港")) return { bg: "bg-emerald-100", text: "text-emerald-700", border: "border-emerald-300" };
   if (s.includes("瑞秋")) return { bg: "bg-fuchsia-100", text: "text-fuchsia-700", border: "border-fuchsia-300" };
+  if (s.includes("纽酷")) return { bg: "bg-stone-100", text: "text-stone-700", border: "border-stone-300" };
+  if (s.includes("博创兴")) return { bg: "bg-red-100", text: "text-red-700", border: "border-red-300" };
+  if (s.includes("环洋") || s.includes("HYE")) return { bg: "bg-yellow-100", text: "text-yellow-700", border: "border-yellow-300" };
   return { bg: "bg-gray-100", text: "text-gray-700", border: "border-gray-300" };
 }
 

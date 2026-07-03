@@ -27,6 +27,9 @@ const { parseXinsheng } = require("./xinsheng");
 const { parseMeiQi } = require("./meiqi_us");
 const { parseJingang } = require("./jingang");
 const { parseRuiqiu } = require("./ruiqiu");
+const { parseNiuku } = require("./niuku");
+const { parseBochuangxing } = require("./bochuangxing");
+const { parseHYE } = require("./hye");
 
 // ── 供应商识别规则 ──
 function identifySupplier(fileName) {
@@ -52,6 +55,9 @@ function identifySupplier(fileName) {
   if (n.includes("美琦") || n.includes("meiqi")) return "meiqi";
   if (n.includes("劲港") || n.includes("jingang")) return "jingang";
   if (n.includes("瑞秋") || n.includes("ruiqiu")) return "ruiqiu";
+  if (n.includes("纽酷") || n.includes("niuku")) return "niuku";
+  if (n.includes("博创兴") || n.includes("bochuangxing")) return "bochuangxing";
+  if (n.includes("环洋") || n.includes("hye")) return "hye";
   return null;
 }
 
@@ -134,6 +140,15 @@ function main() {
           break;
         case "ruiqiu":
           results = parseRuiqiu(filePath);
+          break;
+        case "niuku":
+          results = parseNiuku(filePath);
+          break;
+        case "bochuangxing":
+          results = parseBochuangxing(filePath);
+          break;
+        case "hye":
+          results = parseHYE(filePath);
           break;
       }
     } catch (err) {

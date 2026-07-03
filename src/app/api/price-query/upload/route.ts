@@ -39,6 +39,9 @@ function identifySupplier(fileName: string): string | null {
   if (n.includes("美琦") || n.includes("meiqi")) return "meiqi";
   if (n.includes("劲港") || n.includes("jingang")) return "jingang";
   if (n.includes("瑞秋") || n.includes("ruiqiu")) return "ruiqiu";
+  if (n.includes("纽酷") || n.includes("niuku")) return "niuku";
+  if (n.includes("博创兴") || n.includes("bochuangxing")) return "bochuangxing";
+  if (n.includes("环洋") || n.includes("hye")) return "hye";
   return null;
 }
 
@@ -61,6 +64,9 @@ const PARSER_REGISTRY: Record<string, { file: string; exportName: string }> = {
   meiqi:      { file: "meiqi_us.js",    exportName: "parseMeiQi" },
   jingang:    { file: "jingang.js",     exportName: "parseJingang" },
   ruiqiu:     { file: "ruiqiu.js",      exportName: "parseRuiqiu" },
+  niuku:      { file: "niuku.js",       exportName: "parseNiuku" },
+  bochuangxing: { file: "bochuangxing.js", exportName: "parseBochuangxing" },
+  hye:        { file: "hye.js",         exportName: "parseHYE" },
 };
 
 /** 多线路供应商：同一 Excel 可能包含多个国家的 Sheet，需依次尝试所有子解析器 */
