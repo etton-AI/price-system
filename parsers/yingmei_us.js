@@ -252,13 +252,14 @@ function parseSeaCard(ws, sheetName) {
         col0.includes("特别提示") || col0.includes("重货优惠")) continue;
 
     // 渠道名称行 (第一列含渠道代码如 B1/B2/B4等)
-    if (col0 && col0.match(/^B\d+/)) {
+    // 注意：渠道名和第一个仓库组经常在同一行（col0=渠道名, col1=仓库组），不能 continue 跳过
+    const isChannelRow = !!(col0 && col0.match(/^B\d+/));
+    if (isChannelRow) {
       currentChannelName = col0;
-      continue;
     }
 
-    // 仓库分组行 (渠道名只在第一行col0, 后续行col0为空、col1为仓库分组)
-    const warehouseCell = col0 || col1;
+    // 仓库分组行 (渠道名+仓库组同行时用col1；后续行col0为空用col1)
+    const warehouseCell = isChannelRow ? col1 : (col0 || col1);
     if (warehouseCell && currentChannelName) {
       // 同时检查是否有 "按方包税" 变体
       const fullName = currentChannelName.replace(/\r?\n/g, " ");
@@ -473,6 +474,20 @@ function parseYingmei(filePath) {
     allResults.push(...r);
   }
 
+  // ── 英欧线 Sheets ──
+  const euConfigs = getEUConfigs();
+  for (const cfg of euConfigs) {
+    if (wb.SheetNames.includes(cfg.sheetName)) {
+      try {
+        const r = parseEUSheet(wb.Sheets[cfg.sheetName], cfg);
+        console.log(`  [${cfg.sheetName}] ${r.length} 条 → ${cfg.country}`);
+        allResults.push(...r);
+      } catch (err) {
+        console.error(`  [${cfg.sheetName}] 解析失败: ${err.message}`);
+      }
+    }
+  }
+
   console.log(`[英美] 总计解析 ${allResults.length} 条价格记录`);
   return allResults;
 }
@@ -595,6 +610,205 @@ function parseYingmeiCanada(ws, sheetName) {
   }
 
   return results;
+}
+
+// ═══════════════════════════════════════════
+// 英欧线解析 (英国 + 欧洲大陆)
+// ═══════════════════════════════════════════
+
+// 英欧线 4 城市组 (比美线多了华北)
+const EU_CITY_GROUPS = [
+  { label: "华南", cities: ["深圳", "东莞", "广州", "中山", "汕头"] },
+  { label: "华中", cities: ["泉州", "厦门", "福州"] },
+  { label: "华东", cities: ["义乌", "上海", "温州", "宁波", "杭州"] },
+  { label: "华北", cities: ["合肥", "青岛"] },
+];
+
+// 仅 3 城市组 (无华北) — 用于英国海运等
+const EU_CITY_GROUPS_3 = EU_CITY_GROUPS.slice(0, 3);
+
+/** 拆分英欧线仓库（/ 或中文逗号分隔） */
+function splitEUDestinations(cell) {
+  const text = String(cell || "").replace(/\r?\n/g, " ").trim();
+  if (!text) return [];
+  // 先尝试 / 分隔
+  if (text.includes("/")) {
+    return text.split("/").map((s) => s.trim()).filter((s) => s && s.length >= 2);
+  }
+  // 中文逗号分隔
+  return text.split(/[，,]/).map((s) => s.trim()).filter((s) => s && s.length >= 2 && !s.includes("特价") && !s.includes("特惠"));
+}
+
+/** 判断 dest 是 warehouse 还是 country */
+function classifyDest(dest) {
+  if (dest.match(/^[A-Z]{2,}\d/)) return "warehouse";
+  if (dest.match(/^[A-Z0-9]{3,}$/) && dest.match(/[A-Z]/)) return "warehouse";
+  return "country";
+}
+
+/** 提取渠道名中的税务模式 */
+function detectTaxMode(channelName) {
+  const n = channelName;
+  if (n.includes("不包税") || n.includes("自税") || n.includes("VAT")) return "不包税";
+  if (n.includes("包税") || n.includes("PVA") || n.includes("递延")) return "包税";
+  return "包税";
+}
+
+/** 通用英欧线 Sheet 解析 */
+function parseEUSheet(ws, config) {
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+  if (data.length < 5) return [];
+  const results = [];
+
+  const cityGroups = config.cityGroups || EU_CITY_GROUPS;
+  const tiersPerGroup = config.tiersPerGroup || 3;
+  let currentChannel = "";
+
+  for (let ri = 4; ri < data.length; ri++) {
+    const row = data[ri];
+    const col0 = String(row[0] || "").replace(/\r?\n/g, " ").trim();
+    const col1 = String(row[1] || "").replace(/\r?\n/g, " ").trim();
+
+    // 跳过空行
+    if (!col0 && !col1) continue;
+    // 跳过新 section header 行
+    if (col0.includes("产品渠道名称") || col1 === "国家/重量" || col1.includes("国家/重量")) continue;
+    if (col0 === "产品渠道名称" || col0 === "产品渠道名称 ") continue;
+    // 跳过说明行
+    if (col0.startsWith("一.") || col0.startsWith("二.") || col0.startsWith("三.")) continue;
+    if (col0.includes("报关") || col0.includes("注意事项") || col0.includes("赔偿")) continue;
+    if (col0.includes("重货优惠") || col0.includes("特别提示") || col0.includes("派送和")) continue;
+    if (col1.includes("基础运费") || col1.includes("单票单询")) continue;
+
+    // 新渠道行 (col0 非空)
+    if (col0 && col0.length > 2) {
+      currentChannel = col0;
+    }
+
+    // 目的地 (col1)
+    if (!col1) continue;
+    const taxMode = detectTaxMode(currentChannel || config.country);
+    const dests = splitEUDestinations(col1);
+
+    if (dests.length === 0) {
+      // 可能是单个国家名 (如 "英国", "德国")
+      if (col1.length >= 2 && !col1.includes("国家") && !col1.includes("重量") && !col1.includes("产品")) {
+        dests.push(col1);
+      } else {
+        continue;
+      }
+    }
+
+    for (const dest of dests) {
+      const destType = classifyDest(dest);
+
+      for (let gi = 0; gi < cityGroups.length; gi++) {
+        const cg = cityGroups[gi];
+        const groupStartCol = 2 + gi * tiersPerGroup;
+
+        for (let ti = 0; ti < tiersPerGroup; ti++) {
+          const col = groupStartCol + ti;
+          if (col >= row.length) continue;
+          const price = parseFloat(row[col]);
+          if (isNaN(price) || price <= 0) continue;
+
+          const wtLabel = config.weightLabels ? config.weightLabels[ti] : `${config.weightValues?.[ti] || 0}KG+`;
+          const wtValue = config.weightValues ? config.weightValues[ti] : 0;
+
+          results.push({
+            supplier: SUPPLIER,
+            country: config.country,
+            channel_name: currentChannel,
+            transport_mode: config.transportMode,
+            vessel_config: config.transportMode,
+            vessel_tags: [config.transportMode],
+            delivery_method: config.deliveryMethod || "快递派",
+            destination_type: destType,
+            destination_code: dest,
+            destination_region: dest,
+            origin_region: cg.label,
+            origin_cities: cg.cities,
+            billing_type: config.billingType || "包税",
+            tax_mode: taxMode,
+            min_quantity: wtLabel,
+            min_quantity_value: wtValue,
+            unit_price: price,
+            price_unit: config.priceUnit || "元/KG",
+            transit_time_min: null,
+            transit_time_max: null,
+            transit_time_desc: "",
+            claim_rule: "",
+            effective_date: "",
+            source_sheet: config.sheetName,
+          });
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
+/** 生成英欧线 Sheet 配置 */
+function getEUConfigs() {
+  return [
+    // ── 欧洲海运 KG ──
+    {
+      sheetName: "欧洲海运KG", country: "欧线", transportMode: "海运",
+      deliveryMethod: "快递派", priceUnit: "元/KG", billingType: "包税",
+      tiersPerGroup: 3, weightLabels: ["25KG+", "71KG+", "1000KG+"], weightValues: [25, 71, 1000],
+      cityGroups: EU_CITY_GROUPS,
+    },
+    // ── 欧洲海运 CBM ──
+    {
+      sheetName: "欧洲海运CBM", country: "欧线", transportMode: "海运",
+      deliveryMethod: "卡派", priceUnit: "元/CBM", billingType: "不含税CBM",
+      tiersPerGroup: 4, weightLabels: ["2CBM+", "5CBM+", "10CBM+", "15CBM+"], weightValues: [2, 5, 10, 15],
+      cityGroups: EU_CITY_GROUPS_3,
+    },
+    // ── 英国海运 ──
+    {
+      sheetName: "英国海运", country: "英国", transportMode: "海运",
+      deliveryMethod: "快递派", priceUnit: "元/KG", billingType: "包税",
+      tiersPerGroup: 4, weightLabels: ["25KG+", "100KG+", "1000KG+", "3000KG+"], weightValues: [25, 100, 1000, 3000],
+      cityGroups: EU_CITY_GROUPS_3,
+    },
+    // ── 苏新号中欧卡航 ──
+    {
+      sheetName: "苏新号中欧卡航", country: "欧线", transportMode: "卡航",
+      deliveryMethod: "卡派", priceUnit: "元/KG", billingType: "包税",
+      tiersPerGroup: 3, weightLabels: ["25KG+", "71KG+", "500KG+"], weightValues: [25, 71, 500],
+      cityGroups: EU_CITY_GROUPS,
+    },
+    // ── 苏新号中英卡航 ──
+    {
+      sheetName: "苏新号中英卡航", country: "英国", transportMode: "卡航",
+      deliveryMethod: "快递派", priceUnit: "元/KG", billingType: "包税",
+      tiersPerGroup: 3, weightLabels: ["25KG+", "71KG+", "500KG+"], weightValues: [25, 71, 500],
+      cityGroups: EU_CITY_GROUPS,
+    },
+    // ── 欧洲铁路 ──
+    {
+      sheetName: "欧洲铁路", country: "欧线", transportMode: "铁路",
+      deliveryMethod: "快递派", priceUnit: "元/KG", billingType: "包税",
+      tiersPerGroup: 3, weightLabels: ["25KG+", "71KG+", "1000KG+"], weightValues: [25, 71, 1000],
+      cityGroups: EU_CITY_GROUPS,
+    },
+    // ── 英国铁路 ──
+    {
+      sheetName: "英国铁路", country: "英国", transportMode: "铁路",
+      deliveryMethod: "快递派", priceUnit: "元/KG", billingType: "包税",
+      tiersPerGroup: 3, weightLabels: ["25KG+", "71KG+", "1000KG+"], weightValues: [25, 71, 1000],
+      cityGroups: EU_CITY_GROUPS,
+    },
+    // ── 纯电 DG 专线 ──
+    {
+      sheetName: "纯电DG专线", country: "欧线", transportMode: "海运",
+      deliveryMethod: "快递派", priceUnit: "元/KG", billingType: "包税",
+      tiersPerGroup: 3, weightLabels: ["25KG+", "100KG+", "500KG+"], weightValues: [25, 100, 500],
+      cityGroups: EU_CITY_GROUPS,
+    },
+  ];
 }
 
 module.exports = { parseYingmei };

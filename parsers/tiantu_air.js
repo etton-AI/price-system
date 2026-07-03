@@ -83,8 +83,8 @@ function parseUSAirRegion(ws, sheetName, channelName) {
   if (data.length < 7) return [];
   const results = [];
 
-  // R5=city headers, R6=weight tiers, R7+=data
-  for (let ri = 7; ri < data.length; ri++) {
+  // R4=city headers, R5=weight tiers, R6+=data
+  for (let ri = 6; ri < data.length; ri++) {
     const row = data[ri];
     const region = String(row[0] || "").trim();
     if (!region || region.includes("备注")) continue;
@@ -184,6 +184,11 @@ function parseTiantuAir(filePath) {
   const configs = [
     { name: "美国空卡（8）", fn: (ws) => parseUSAirSheet(ws, "美国空卡8日达", "美国空卡-8日达") },
     { name: "美国空运&美西普货(5-8) ", fn: (ws) => parseUSAirRegion(ws, "美西普货5-8日达", "美国空派-美西普货5日提") },
+    { name: "美国空运&美西普货自清(5-8) ", fn: (ws) => parseUSAirRegion(ws, "美西普货自清5-8日达", "美国空派-美西普货自清5日提") },
+    { name: "美国空运&美西带电(10)", fn: (ws) => parseUSAirRegion(ws, "美西带电10日达", "美国空派-美西带电10日提") },
+    { name: "美国空运&美西带电自清(10)", fn: (ws) => parseUSAirRegion(ws, "美西带电自清10日达", "美国空派-美西带电自清10日提") },
+    { name: "美国空运&美东美中普货(5)", fn: (ws) => parseUSAirRegion(ws, "美东美中普货5日达", "美国空派-美东美中普货5日提") },
+    { name: "美国空运&美东美中普货自清(5)", fn: (ws) => parseUSAirRegion(ws, "美东美中普货自清5日达", "美国空派-美东美中普货自清5日提") },
   ];
 
   for (const cfg of configs) {
