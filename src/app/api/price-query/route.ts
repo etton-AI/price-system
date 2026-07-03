@@ -267,26 +267,39 @@ function query(params: QueryParams): { results: PriceEntry[]; total: number; bes
     results = Object.values(grouped);
   }
 
-  // 4. 船司（支持别名：美森→CLX/MAX, CLX→美森/Matson 等）
+  // 4. 船司（别名映射 + 普船排除逻辑）
   if (params.vessel) {
     const v = params.vessel.toLowerCase();
     const VESSEL_ALIASES: Record<string, string[]> = {
       "美森": ["clx", "max", "matson"],
       "matson": ["美森", "clx", "max"],
-      "clx": ["美森", "matson"],
-      "max": ["美森", "matson"],
-      "exx": ["合德"],
-      "以星": ["zim"],
-      "zim": ["以星"],
-      "cosco": ["oa"],
-      "oa": ["cosco", "msc", "whl"],
-      "msc": ["oa", "whl"],
-      "whl": ["oa", "msc"],
+      "clx": ["美森"],
+      "max": ["美森"],
+      "合德": ["hd"],
+      "hd": ["合德"],
+      "以星": ["zim", "zem"],
+      "zim": ["以星", "zem"],
+      "zem": ["以星", "zim"],
+      "oa": ["cosco", "emc", "cma", "oocl"],
+      "cosco": ["oa", "emc", "cma", "oocl"],
+      "emc": ["oa", "cosco", "cma", "oocl"],
+      "cma": ["oa", "cosco", "emc", "oocl"],
+      "oocl": ["oa", "cosco", "emc", "cma"],
     };
+    // 普船: 排除所有快船/名牌船司
+    const PREMIUM_VESSELS = ["美森", "matson", "clx", "max", "exx", "合德", "hd", "以星", "zim", "zem", "oa", "cosco", "emc", "cma", "oocl"];
+    const isPuChuan = v === "普船";
     const aliases = VESSEL_ALIASES[v] || [];
     results = results.filter((r) => {
       const vesselConfig = (r.vessel_config || "").toLowerCase();
       const channelName = (r.channel_name || "").toLowerCase();
+      if (isPuChuan) {
+        // 普船: 排除所有快船/名牌
+        for (const pv of PREMIUM_VESSELS) {
+          if (vesselConfig.includes(pv) || channelName.includes(pv)) return false;
+        }
+        return true;
+      }
       if (vesselConfig.includes(v) || channelName.includes(v)) return true;
       for (const alias of aliases) {
         if (vesselConfig.includes(alias) || channelName.includes(alias)) return true;
