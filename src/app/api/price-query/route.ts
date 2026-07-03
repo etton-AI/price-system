@@ -160,15 +160,21 @@ function query(params: QueryParams): { results: PriceEntry[]; total: number; bes
   // 0.6 过滤 0 价格脏数据
   results = results.filter((r) => r.unit_price > 0);
 
-  // 1. 目的仓（支持复合代码如 "YYZ/YHM/YOO" 的部分匹配）
+  // 1. 目的仓（模糊匹配：代码 / 复合代码 / 区域 / 包含）
   if (params.dest) {
     const dest = params.dest.toUpperCase();
     results = results.filter((r) => {
       if (r.destination_type === "none" || r.destination_code === "*") return false;
       const code = r.destination_code.toUpperCase();
+      const region = (r.destination_region || "").toUpperCase();
       if (code === dest) return true;
-      // 复合代码拆分匹配: "YYZ/YHM/YOO" 匹配 "YYZ"
-      return code.split("/").map((s: string) => s.trim()).some((part: string) => part === dest);
+      // 复合代码拆分: "YYZ/YHM/YOO" 匹配 "YYZ"
+      if (code.split("/").map((s: string) => s.trim()).some((part: string) => part === dest)) return true;
+      // 区域模糊匹配: 搜"美西"匹配 destination_region="美西"
+      if (region && region.includes(dest)) return true;
+      // 代码包含搜索词: "ONT" 匹配 "ONT8"
+      if (code.includes(dest)) return true;
+      return false;
     });
   }
 
