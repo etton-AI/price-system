@@ -995,29 +995,48 @@ function parseMexicoAirSea(ws) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 加拿大空运海运 — 空运6日提/9日提 + 海运美转加
+// 加拿大空运海运 — 空运6日/9日 + 海运美转加(MATSON/EXX/OA) + 直航
 // ═══════════════════════════════════════════════════════════════
 function parseCanadaAirSea(ws) {
   const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
   const results = [];
-  // R5-R8 headers, R9+ data: col2=warehouse label, col4-6=空运6日提普货, col7-9=空运6日提带电, col10-11=空运9日提普货
-  const airSections = [
-    {name:"加拿大空运6日提-普货",startCol:4,tiers:[{o:0,l:"21KG+",v:21},{o:1,l:"45KG+",v:45},{o:2,l:"100KG+",v:100}],transitMin:5,transitMax:8,transitDesc:"6天提取"},
-    {name:"加拿大空运6日提-带电/敏感",startCol:7,tiers:[{o:0,l:"21KG+",v:21},{o:1,l:"45KG+",v:45},{o:2,l:"100KG+",v:100}],transitMin:6,transitMax:9,transitDesc:"7天提取"},
-    {name:"加拿大空运9日提-普货",startCol:10,tiers:[{o:0,l:"21KG+",v:21},{o:1,l:"45KG+",v:45},{o:2,l:"100KG+",v:100}],transitMin:8,transitMax:12,transitDesc:"9天提取"},
+  // R5: channel headers, R8: tier labels (21KG+/45KG+/100KG+ or 0.1CBM+/1CBM+/5CBM+/10CBM+)
+  // R9+: data rows: col2=warehouse label, cols 4+ = prices per channel section
+  const TIER_3KG = [{o:0,l:"21KG+",v:21},{o:1,l:"45KG+",v:45},{o:2,l:"100KG+",v:100}];
+  const allSections = [
+    // 空运
+    {name:"加拿大空运6日提-普货",startCol:4,tiers:TIER_3KG,mode:"空运",vessel:"空运",tags:["空运","加拿大"],delivery:"快递派",tMin:5,tMax:8,tDesc:"6天提取"},
+    {name:"加拿大空运6日提-带电/敏感",startCol:7,tiers:TIER_3KG,mode:"空运",vessel:"空运",tags:["空运","加拿大"],delivery:"快递派",tMin:6,tMax:9,tDesc:"7天提取"},
+    {name:"加拿大空运9日提-普货",startCol:10,tiers:TIER_3KG,mode:"空运",vessel:"空运",tags:["空运","加拿大"],delivery:"快递派",tMin:8,tMax:12,tDesc:"9天提取"},
+    {name:"加拿大空运9日提-带电/敏感",startCol:13,tiers:TIER_3KG,mode:"空运",vessel:"空运",tags:["空运","加拿大"],delivery:"快递派",tMin:8,tMax:12,tDesc:"9天提取"},
+    {name:"加拿大空运8日提-普货(加东)",startCol:16,tiers:TIER_3KG,mode:"空运",vessel:"空运",tags:["空运","加拿大"],delivery:"快递派",tMin:7,tMax:10,tDesc:"8天提取"},
+    {name:"加拿大空运10日提-带电(加东)",startCol:19,tiers:TIER_3KG,mode:"空运",vessel:"空运",tags:["空运","加拿大"],delivery:"快递派",tMin:9,tMax:12,tDesc:"10天提取"},
+    // 海运
+    {name:"美转加美森17日达",startCol:22,tiers:TIER_3KG,mode:"海运",vessel:"美森正班",tags:["美森","加拿大"],delivery:"快递派",tMin:20,tMax:27,tDesc:"开船后16-20天提取"},
+    {name:"美转加合德/以星21日达",startCol:25,tiers:TIER_3KG,mode:"海运",vessel:"EXX/以星",tags:["合德","以星","加拿大"],delivery:"快递派",tMin:24,tMax:31,tDesc:"开船后20-24天提取"},
+    {name:"美转加OA25日达",startCol:28,tiers:TIER_3KG,mode:"海运",vessel:"OA统配",tags:["OA","加拿大"],delivery:"快递派",tMin:28,tMax:37,tDesc:"开船后24-30天提取"},
+    {name:"加拿大直航包税",startCol:31,tiers:TIER_3KG,mode:"海运",vessel:"直航统配",tags:["直航","加拿大"],delivery:"卡派",tMin:34,tMax:44,tDesc:"开船后30-40天提取"},
+    // CBM计费
+    {name:"加拿大直航不包税",startCol:34,tiers:[{o:0,l:"0.1CBM+",v:0.1},{o:1,l:"1CBM+",v:1},{o:2,l:"5CBM+",v:5},{o:3,l:"10CBM+",v:10}],mode:"海运",vessel:"直航统配",tags:["直航","加拿大","不包税"],delivery:"卡派",tMin:34,tMax:44,tDesc:"开船后30-40天提取",billing:"不含税",unit:"元/CBM"},
   ];
   for(let ri=9;ri<data.length;ri++){
     const row=data[ri];const label=String(row[2]||"").trim();
     if(!label||label.includes("价表未覆盖")||label.includes("空运泡货"))continue;
     if(label.includes("非FBA"))continue;
-    // Extract warehouse codes: match 3-letter codes with optional digits (YYZ, YOO1, YVR, YXX2, etc.)
     let whs=[];const whMatch=label.match(/[A-Z]{3}\d*/g);
     if(whMatch)whs=[...new Set(whMatch)];else whs=[label.replace(/\n.*/,'').trim().slice(0,40)];
-    for(const sec of airSections){
+    for(const sec of allSections){
       for(const t of sec.tiers){
-        const p=parseFloat(row[sec.startCol+t.o]);if(isNaN(p)||p<=0||p>200)continue;
+        const p=parseFloat(row[sec.startCol+t.o]);if(isNaN(p)||p<=0||p>9999)continue;
         for(const w of whs){
-          results.push(makeRecord({supplier:SUPPLIER,country:COUNTRY,channelName:sec.name,transportMode:"空运",vesselConfig:"空运",vesselTags:["空运","加拿大"],deliveryMethod:"快递派",destType:"warehouse",destCode:w,destRegion:"加拿大",billingType:"包税",minQty:t.l,minQtyValue:t.v,price:p,transitMin:sec.transitMin,transitMax:sec.transitMax,transitDesc:sec.transitDesc,sourceSheet:"加拿大空运海运"}));
+          results.push(makeRecord({
+            supplier:SUPPLIER,country:COUNTRY,channelName:sec.name,
+            transportMode:sec.mode,vesselConfig:sec.vessel,vesselTags:sec.tags,
+            deliveryMethod:sec.delivery,destType:"warehouse",destCode:w,destRegion:"加拿大",
+            billingType:sec.billing||"包税",minQty:t.l,minQtyValue:t.v,price:p,
+            priceUnit:sec.unit||"元/KG",transitMin:sec.tMin,transitMax:sec.tMax,
+            transitDesc:sec.tDesc,sourceSheet:"加拿大空运海运"
+          }));
         }
       }
     }

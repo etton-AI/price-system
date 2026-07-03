@@ -125,12 +125,19 @@ function query(params: QueryParams): { results: PriceEntry[]; total: number; bes
     });
   }
 
-  // 0.3 DG 过滤: 筛选 DG/纯电线路
+  // 0.3 DG 过滤: 普货查询时排除DG/纯电，DG专线时仅显示DG/纯电
   if (params.dg) {
     results = results.filter((r) => {
       const cn = (r.channel_name || "").toUpperCase();
       const dm = (r.delivery_method || "").toUpperCase();
       return cn.includes("DG") || cn.includes("纯电") || dm.includes("DG");
+    });
+  } else {
+    results = results.filter((r) => {
+      const cn = (r.channel_name || "").toUpperCase();
+      const dm = (r.delivery_method || "").toUpperCase();
+      if (cn.includes("DG") || cn.includes("纯电") || dm.includes("DG")) return false;
+      return true;
     });
   }
 
@@ -178,13 +185,24 @@ function query(params: QueryParams): { results: PriceEntry[]; total: number; bes
     });
   }
 
-  // 2. 发货城市
+  // 2. 发货城市（支持模糊匹配：华南→深圳/东莞/广州/中山，中山→中山）
   if (params.origin) {
     const origin = params.origin;
+    const searchLower = origin.toLowerCase();
+
+    // 通用区域→城市映射（所有供应商通用）
+    const REGION_TO_CITIES: Record<string, string[]> = {
+      "华南": ["深圳", "东莞", "广州", "中山", "惠州", "汕头", "佛山", "珠海", "江门"],
+      "华东": ["义乌", "上海", "宁波", "杭州", "苏州", "温州", "绍兴", "嘉兴", "南京", "合肥"],
+      "华中": ["武汉", "长沙", "郑州", "成都", "重庆"],
+      "华北": ["青岛", "天津", "济南", "潍坊", "南昌", "石家庄", "西安", "沧州", "保定", "连云港", "台州"],
+      "福建": ["厦门", "泉州", "福州"],
+    };
+    const regionCities = (REGION_TO_CITIES[origin] || []).map(c => c.toLowerCase());
+
     const ettonCities = (CITY_TO_ORIGIN.etton[origin] || []).map((c) => c.toLowerCase());
     const tiantuCities = (CITY_TO_ORIGIN.tiantu[origin] || []).map((c) => c.toLowerCase());
     const yingmeiCities = (CITY_TO_ORIGIN.yingmei[origin] || []).map((c) => c.toLowerCase());
-    const searchLower = origin.toLowerCase();
 
     results = results.filter((r) => {
       if (!r.origin_cities || r.origin_cities.length === 0) return true;
@@ -198,9 +216,16 @@ function query(params: QueryParams): { results: PriceEntry[]; total: number; bes
       else if (supplierKey === "yingmei") targetCities = yingmeiCities;
       else targetCities = [];
 
+      // 直接城市匹配: 搜"中山"匹配 origin_cities 中的"中山"
       if (cities.some((c) => c.includes(searchLower) || searchLower.includes(c))) return true;
+      // 供应商特定映射
       if (targetCities.length > 0 && targetCities.some((tc) => cities.some((c) => c.includes(tc) || tc.includes(c)))) return true;
+      // 区域名称匹配: 搜"华南"匹配 origin_region="华南"
       if (region.includes(searchLower)) return true;
+      // 通用区域→城市匹配: 搜"华南"时，所有含深圳/东莞/广州/中山的记录都返回
+      if (regionCities.length > 0 && regionCities.some((rc) => cities.some((c) => c.includes(rc) || rc.includes(c)))) return true;
+      // 反向: 搜"深圳"时也匹配 origin_region 包含的城市
+      if (region && searchLower.length >= 2 && cities.some((c) => region.includes(c))) return true;
       return false;
     });
   }
