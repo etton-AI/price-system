@@ -82,6 +82,10 @@ function scanLayout(data, dataStartRow) {
 function parseGenericSheet(ws, sheetName, config) {
   const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
   if (data.length < 6) return [];
+
+  // Detect FBN format: row3 col2 = "商业平台"
+  const isFBN = String(data[3]?.[2] || "").includes("商业平台");
+
   const layout = scanLayout(data, config.dataStartRow || 6);
   const results = [];
   let currentChannel = config.channelName || sheetName;
@@ -89,11 +93,13 @@ function parseGenericSheet(ws, sheetName, config) {
   for (let ri = layout.dataStartRow; ri < data.length; ri++) {
     const row = data[ri];
     const chName = String(row[layout.channelCol] || "").trim();
-    const dest = String(row[layout.destCol] || "").trim();
+    // FBN: dest in col4 (postal code); FBA: dest in col2
+    const destCol = isFBN ? 4 : layout.destCol;
+    const dest = String(row[destCol] || "").trim();
 
     if (!dest || dest.length < 2) continue;
     if (dest.includes("仓库代码") || dest.includes("区域") || dest.includes("邮编")) continue;
-    if (dest.includes("备注") || dest.includes("说明")) continue;
+    if (dest.includes("备注") || dest.includes("说明") || dest.includes("头程/自提")) continue;
 
     // Update channel if col1 has a non-empty value
     if (chName && chName.length > 2 && !chName.includes("下单") && !chName.includes("渠道")) {
@@ -101,11 +107,13 @@ function parseGenericSheet(ws, sheetName, config) {
     }
 
     // Determine destination type
-    let destType = "warehouse";
+    let destType = isFBN ? "commercial" : "warehouse";
     let destRegion = dest;
     if (dest.includes("美西") || dest.includes("邮编8") || dest.includes("邮编 8")) { destType = "region"; destRegion = "美西"; }
     else if (dest.includes("美中") || dest.includes("邮编4") || dest.includes("邮编 4")) { destType = "region"; destRegion = "美中"; }
     else if (dest.includes("美东") || dest.includes("邮编0") || dest.includes("邮编 0")) { destType = "region"; destRegion = "美东"; }
+    // 5-digit postal code = commercial address
+    else if (/^\d{5}$/.test(dest)) { destType = "commercial"; destRegion = ""; }
 
     for (const col of layout.columns) {
       if (col.col >= row.length) continue;

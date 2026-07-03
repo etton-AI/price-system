@@ -154,6 +154,7 @@ function supplierBadge(s: string) {
 
 export default function PriceQueryPage() {
   const [country, setCountry] = useState("美国");
+  const [subCountry, setSubCountry] = useState("美国"); // DG/商业地址的二级国家
   const [transportMode, setTransportMode] = useState("全部");
   const [dest, setDest] = useState("");
   const [origin, setOrigin] = useState("");
@@ -253,13 +254,13 @@ export default function PriceQueryPage() {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      // DG专线: 跨国家过滤, 传 dg=1 + country=美国
+      // DG专线: 跨国家过滤, 传 dg=1 + subCountry指定国家
       if (country === "DG专线") {
         params.set("dg", "1");
-        params.set("country", "美国");
+        params.set("country", subCountry === "欧线" ? "欧洲" : subCountry);
       } else if (country === "商业地址") {
         params.set("commercial", "1");
-        params.set("country", "美国"); // 默认美国，后续可按国家切换
+        params.set("country", subCountry === "欧线" ? "欧洲" : subCountry);
       } else if (country === "越南→美国") {
         params.set("country", "美国");
         params.set("origin", "越南");
@@ -415,6 +416,18 @@ export default function PriceQueryPage() {
                 {cfg.icon} {cfg.label}
               </button>
             ))}
+            {/* DG/商业地址 二级国家选择 */}
+            {(country === "DG专线" || country === "商业地址") && (
+              <select
+                value={subCountry}
+                onChange={(e) => setSubCountry(e.target.value)}
+                className="ml-2 px-3 py-1.5 rounded-full text-sm border border-gray-300 bg-white text-gray-700"
+              >
+                {["美国", "加拿大", "英国", "欧线"].map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            )}
           </div>
 
           {/* 步骤2: 运输方式 */}
