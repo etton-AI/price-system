@@ -167,9 +167,27 @@ function query(params: QueryParams): { results: PriceEntry[]; total: number; bes
   // 0.6 过滤 0 价格脏数据
   results = results.filter((r) => r.unit_price > 0);
 
-  // 1. 目的仓（模糊匹配：代码 / 复合代码 / 区域 / 包含）
+  // 1. 目的仓（模糊匹配：代码 / 复合代码 / 区域 / 城市名 / 包含）
   if (params.dest) {
     const dest = params.dest.toUpperCase();
+    // 加拿大机场代码→城市名映射（天图等供应商用城市名而非代码）
+    const AIRPORT_TO_CITIES: Record<string, string[]> = {
+      "YYZ": ["TORONTO","AJAX","BRAMPTON","MARKHAM","MISSISSAUGA","OAKVILLE","RICHMOND HILL","VAUGHAN","PICKERING","SCARBOROUGH","NORTH YORK","ETOBICOKE","WHITBY","OSHAWA","CALEDON","BURLINGTON","MILTON","AURORA","NEWMARKET","KING CITY"],
+      "YVR": ["VANCOUVER","RICHMOND","BURNABY","SURREY","LANGLEY","ABBOTSFORD","COQUITLAM","DELTA","NEW WESTMINSTER","PORT COQUITLAM","PITT MEADOW","MISSION","CHILLIWACK","WHISTLER","KAMLOOPS","KELOWNA"],
+      "YYC": ["CALGARY","AIRDRIE","ALDERSYDE","COCHRANE","HIGH RIVER","RED DEER","OKOTOKS","CHESTERMERE","BROOKS"],
+      "YEG": ["EDMONTON","SHERWOOD PARK","ST ALBERT","LEDUC","FORT MCMURRAY","COLD LAKE"],
+      "YOW": ["OTTAWA","GATINEAU","NEPEAN","KANATA","ORLEANS"],
+      "YUL": ["MONTREAL","LAVAL","BROSSARD","DORVAL"],
+      "YXE": ["SASKATOON"],
+      "YQR": ["REGINA"],
+      "YWG": ["WINNIPEG","HEADINGLEY","SELKIRK"],
+      "YHZ": ["HALIFAX","DARTMOUTH"],
+      "YQX": ["GANDER"],
+      "YYT": ["ST JOHNS"],
+    };
+    // 搜"YYZ1"时也匹配YYZ的城市映射（加拿大仓库代码常带数字后缀）
+    const destBase = dest.replace(/\d+$/, ""); // YYZ1 → YYZ, YVR2 → YVR
+    const airportCities = (AIRPORT_TO_CITIES[dest] || AIRPORT_TO_CITIES[destBase] || []).map(c => c.toUpperCase());
     results = results.filter((r) => {
       if (r.destination_type === "none" || r.destination_code === "*") return false;
       const code = r.destination_code.toUpperCase();
@@ -177,6 +195,8 @@ function query(params: QueryParams): { results: PriceEntry[]; total: number; bes
       if (code === dest) return true;
       // 复合代码拆分: "YYZ/YHM/YOO" 匹配 "YYZ"
       if (code.split("/").map((s: string) => s.trim()).some((part: string) => part === dest)) return true;
+      // 机场代码→城市名: 搜"YYZ"匹配 "BRAMPTON, ON"
+      if (airportCities.length > 0 && airportCities.some(city => code.includes(city))) return true;
       // 区域模糊匹配: 搜"美西"匹配 destination_region="美西"
       if (region && region.includes(dest)) return true;
       // 代码包含搜索词: "ONT" 匹配 "ONT8"
