@@ -20,16 +20,12 @@ interface PriceEntryWithCountry extends PriceEntry {
   country?: string;
 }
 
-/**
- * 获取原始 Node.js require（不被 webpack 打包）
- * 通过 eval 绕过 webpack 的静态分析，确保 require("xlsx") 正确解析
- */
-const nodeRequire: NodeRequire = eval("require");
-
-// 从 parsers 目录创建 require，确保 xlsx 等依赖能正确解析
+// 从 parsers 目录获取解析器 require — 使用 loader.js 作锚点
+// loader.js 在 src/ 外部，不会被 webpack 打包，require("xlsx") 可正确解析
 const parsersDir = path.join(process.cwd(), "parsers");
 console.log(`[upload] parsersDir=${parsersDir}, exists=${fs.existsSync(parsersDir)}`);
-const parsersRequire = nodeRequire("module").createRequire(path.join(parsersDir, "_index.js"));
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const parsersRequire = require("module").createRequire(path.join(parsersDir, "loader.js"));
 
 /** 与 build_db.js 一致的供应商识别 */
 function identifySupplier(fileName: string): string | null {

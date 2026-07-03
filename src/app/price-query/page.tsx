@@ -182,7 +182,6 @@ export default function PriceQueryPage() {
   // ── 权限管理状态 ──
   const [authToken, setAuthToken] = useState<string>("");
   const [authUser, setAuthUser] = useState<{ username: string; role: string } | null>(null);
-  const [showLogin, setShowLogin] = useState(false);
   const [loginIdentity, setLoginIdentity] = useState<"admin" | "guest">("admin");
   const [loginPass, setLoginPass] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
