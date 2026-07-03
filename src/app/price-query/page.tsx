@@ -322,17 +322,18 @@ export default function PriceQueryPage() {
       for (let i = 0; i < uploadFiles.length; i++) {
         form.append("files", uploadFiles[i]);
       }
-      const resp = await fetch("/api/price-query/upload", { method: "POST", body: form });
-      const data = await resp.json();
+      const resp = await fetch("/api/price-query/upload", { method: "POST", body: form, signal: AbortSignal.timeout(120000) });
+      let data: { success?: boolean; message?: string; error?: string; totals?: { deduped?: number }; stats?: Record<string, number> };
+      try { data = await resp.json(); } catch { data = { success: false, error: `服务器返回 ${resp.status}: ${resp.statusText}` }; }
       if (data.success) {
-        setUploadMsg({ type: "success", text: data.message });
+        setUploadMsg({ type: "success", text: data.message || "导入完成" });
         setUploadFiles(null);
-        setStats(data.stats ? { total: data.totals.deduped, generated_at: new Date().toISOString() } : stats);
+        setStats(data.stats ? { total: data.totals?.deduped || 0, generated_at: new Date().toISOString() } : stats);
       } else {
-        setUploadMsg({ type: "error", text: data.error || "上传失败" });
+        setUploadMsg({ type: "error", text: data.error || `上传失败 (HTTP ${resp.status})` });
       }
-    } catch {
-      setUploadMsg({ type: "error", text: "网络错误" });
+    } catch (e: unknown) {
+      setUploadMsg({ type: "error", text: `网络错误: ${(e as Error).message || "未知"}` });
     }
     setUploading(false);
   };

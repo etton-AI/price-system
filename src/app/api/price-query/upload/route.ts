@@ -7,19 +7,18 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { refreshCache, getDataPath, type PriceEntry } from "@/lib/price-store";
+import fs from "fs";
+import path from "path";
+import os from "os";
+import { createRequire } from "module";
 
 interface PriceEntryWithCountry extends PriceEntry {
   country?: string;
 }
-import fs from "fs";
-import path from "path";
-import os from "os";
 
-// 绕过 Webpack 的 require — __non_webpack_require__ 是 Next.js 提供的原生 Node require
-const nativeRequire: NodeRequire =
-  typeof (globalThis as Record<string, unknown>).__non_webpack_require__ === "function"
-    ? (globalThis as Record<string, unknown>).__non_webpack_require__ as NodeRequire
-    : eval("require");
+// 从 parsers 目录创建 require，确保 xlsx 等依赖能正确解析
+const parsersDir = path.join(process.cwd(), "parsers");
+const parsersRequire = createRequire(path.join(parsersDir, "_index.js"));
 
 /** 与 build_db.js 一致的供应商识别 */
 function identifySupplier(fileName: string): string | null {
@@ -116,7 +115,6 @@ function parseWithNode(filePath: string, supplier: string): PriceEntry[] {
   }
 
   // 多线路供应商：依次尝试所有子解析器，各取对应 Sheet 的数据
-  const parsersDir = path.join(process.cwd(), "parsers");
   const parserKeys = getParserKeys(supplier);
   const allResults: PriceEntry[] = [];
   const parsedLines: string[] = [];
@@ -126,7 +124,7 @@ function parseWithNode(filePath: string, supplier: string): PriceEntry[] {
     if (!entry) continue;
 
     try {
-      const mod = nativeRequire(path.join(parsersDir, entry.file));
+      const mod = parsersRequire("./" + entry.file);
       const parseFn = mod[entry.exportName];
       if (typeof parseFn !== "function") {
         console.warn(`[upload] ⚠ ${entry.file} 未导出 ${entry.exportName}，跳过`);
