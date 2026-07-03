@@ -183,10 +183,11 @@ export default function PriceQueryPage() {
   const [authToken, setAuthToken] = useState<string>("");
   const [authUser, setAuthUser] = useState<{ username: string; role: string } | null>(null);
   const [showLogin, setShowLogin] = useState(false);
-  const [loginUser, setLoginUser] = useState("");
+  const [loginIdentity, setLoginIdentity] = useState<"admin" | "guest">("admin");
   const [loginPass, setLoginPass] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState("");
+  const [passwordExpired, setPasswordExpired] = useState(false);
   // ── 瘦身模式（预留钩子，后续实现 SheetJS 裁剪） ──
   const [slimMode, setSlimMode] = useState(false);
 
@@ -224,28 +225,31 @@ export default function PriceQueryPage() {
 
   // ── 登录处理 ──
   const handleLogin = async () => {
-    if (!loginUser || !loginPass) return;
+    if (!loginPass) return;
     setLoginLoading(true);
     setLoginError("");
+    setPasswordExpired(false);
     try {
       const resp = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: loginUser, password: loginPass }),
+        body: JSON.stringify({ identity: loginIdentity, password: loginPass }),
       });
       const data = await resp.json();
       if (data.success) {
         setAuthToken(data.token);
         setAuthUser(data.user);
         localStorage.setItem("pq_token", data.token);
-        setShowLogin(false);
-        setLoginUser("");
+        setLoginIdentity("admin");
         setLoginPass("");
+      } else if (data.expired) {
+        setPasswordExpired(true);
+        setLoginError(data.error || "密码已过期");
       } else {
         setLoginError(data.error || "登录失败");
       }
     } catch {
-      setLoginError("网络错误");
+      setLoginError("网络错误，请检查连接后重试");
     }
     setLoginLoading(false);
   };
@@ -254,6 +258,7 @@ export default function PriceQueryPage() {
   const handleLogout = () => {
     setAuthToken("");
     setAuthUser(null);
+    setPasswordExpired(false);
     localStorage.removeItem("pq_token");
   };
 
@@ -445,8 +450,135 @@ export default function PriceQueryPage() {
     }
   })();
 
+  // ── 未登录 → 全屏登录页 ──
+  if (!authUser) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-600 via-blue-700 to-blue-900">
+        {/* 背景装饰 */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute -top-40 -right-40 w-80 h-80 rounded-full bg-blue-500/20 blur-3xl" />
+          <div className="absolute -bottom-40 -left-40 w-80 h-80 rounded-full bg-blue-400/10 blur-3xl" />
+        </div>
+
+        {/* 登录卡片 */}
+        <div className="relative z-10 w-full max-w-md mx-4">
+          <div className="bg-white rounded-2xl shadow-2xl p-8">
+            {/* Logo 区 */}
+            <div className="text-center mb-8">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-blue-100 mb-4">
+                <span className="text-3xl">📊</span>
+              </div>
+              <h1 className="text-2xl font-bold text-gray-900">FBA 比价查询</h1>
+              <p className="text-sm text-gray-500 mt-1">多供应商物流价格查询平台</p>
+            </div>
+
+            {/* 身份选择 */}
+            <div className="space-y-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">选择身份</label>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => { setLoginIdentity("admin"); setLoginError(""); }}
+                  className={`p-4 rounded-xl border-2 text-center transition-all ${
+                    loginIdentity === "admin"
+                      ? "border-blue-500 bg-blue-50 shadow-sm"
+                      : "border-gray-200 bg-white hover:border-gray-300"
+                  }`}
+                >
+                  <div className="text-2xl mb-1">🔧</div>
+                  <div className="font-semibold text-sm text-gray-900">管理员</div>
+                  <div className="text-xs text-gray-400 mt-0.5">Admin</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setLoginIdentity("guest"); setLoginError(""); }}
+                  className={`p-4 rounded-xl border-2 text-center transition-all ${
+                    loginIdentity === "guest"
+                      ? "border-blue-500 bg-blue-50 shadow-sm"
+                      : "border-gray-200 bg-white hover:border-gray-300"
+                  }`}
+                >
+                  <div className="text-2xl mb-1">👤</div>
+                  <div className="font-semibold text-sm text-gray-900">访客</div>
+                  <div className="text-xs text-gray-400 mt-0.5">Guest</div>
+                </button>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">密码</label>
+                <input
+                  type="password"
+                  value={loginPass}
+                  onChange={(e) => { setLoginPass(e.target.value); setLoginError(""); }}
+                  onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+                  placeholder={`输入${loginIdentity === "admin" ? "管理员" : "访客"}密码`}
+                  autoFocus
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                />
+              </div>
+
+              {loginError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
+                  {loginError}
+                </div>
+              )}
+
+              {passwordExpired && (
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-center">
+                  <p className="text-amber-700 font-medium text-sm">密码已过期</p>
+                  <p className="text-amber-600 text-xs mt-1">请联系管理员重置密码后再登录</p>
+                </div>
+              )}
+
+              <button
+                onClick={handleLogin}
+                disabled={loginLoading || passwordExpired}
+                className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm transition-all shadow-lg shadow-blue-600/25"
+              >
+                {loginLoading ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    验证中...
+                  </span>
+                ) : "登 录"}
+              </button>
+            </div>
+          </div>
+
+          {/* 底部提示 */}
+          <p className="text-center text-blue-200/70 text-xs mt-6">
+            获取访客密码请联系开发人员
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* ── 密码过期阻断弹窗 ── */}
+      {passwordExpired && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full mx-4 p-8 text-center">
+            <div className="w-16 h-16 rounded-full bg-amber-100 flex items-center justify-center mx-auto mb-4">
+              <span className="text-3xl">⚠️</span>
+            </div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">密码已过期</h2>
+            <p className="text-gray-500 text-sm mb-6">
+              您的密码已超过 30 天未更换，<br />请联系管理员重置密码。
+            </p>
+            <button
+              onClick={handleLogout}
+              className="w-full py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 text-sm transition-colors"
+            >
+              返回登录页
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 顶部横幅 */}
       <div className="bg-gradient-to-r from-blue-700 to-blue-900 text-white">
         <div className="max-w-7xl mx-auto px-4 py-6">
@@ -465,75 +597,24 @@ export default function PriceQueryPage() {
               </p>
             </div>
             <div className="flex items-center gap-4">
-              {authUser ? (
-                <div className="flex items-center gap-2 text-sm">
-                  <span className="text-blue-200">
-                    👤 {authUser.username}
-                    <span className={`ml-1 px-1.5 py-0.5 rounded text-xs font-medium ${
-                      authUser.role === "admin" ? "bg-yellow-400 text-yellow-900" : "bg-gray-400 text-gray-900"
-                    }`}>
-                      {authUser.role === "admin" ? "管理员" : "访客"}
-                    </span>
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-blue-200">
+                  👤 {authUser.username}
+                  <span className={`ml-1 px-1.5 py-0.5 rounded text-xs font-medium ${
+                    authUser.role === "admin" ? "bg-yellow-400 text-yellow-900" : "bg-blue-400 text-blue-900"
+                  }`}>
+                    {authUser.role === "admin" ? "管理员" : "访客"}
                   </span>
-                  <button
-                    onClick={handleLogout}
-                    className="text-blue-300 hover:text-white text-xs underline"
-                  >
-                    退出
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setShowLogin(!showLogin)}
-                  className="text-blue-200 hover:text-white text-sm underline"
-                >
-                  🔐 登录
+                </span>
+                <button onClick={handleLogout} className="text-blue-300 hover:text-white text-xs underline">
+                  退出
                 </button>
-              )}
+              </div>
               <Link href="/" className="text-blue-200 hover:text-white text-sm underline">← 返回首页</Link>
             </div>
           </div>
         </div>
       </div>
-
-      {/* ── 登录弹窗 ── */}
-      {showLogin && !authUser && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={() => setShowLogin(false)}>
-          <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full mx-4 p-6" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-gray-800 mb-4">🔐 登录比价系统</h3>
-            <div className="space-y-3">
-              <input
-                type="text"
-                value={loginUser}
-                onChange={(e) => setLoginUser(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleLogin()}
-                placeholder="用户名"
-                autoFocus
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-              />
-              <input
-                type="password"
-                value={loginPass}
-                onChange={(e) => setLoginPass(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleLogin()}
-                placeholder="密码"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-              />
-              {loginError && <p className="text-red-500 text-xs">{loginError}</p>}
-              <button
-                onClick={handleLogin}
-                disabled={loginLoading}
-                className="w-full py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 text-sm transition-colors"
-              >
-                {loginLoading ? "登录中..." : "登录"}
-              </button>
-              <p className="text-xs text-gray-400 text-center">
-                查询功能无需登录 · 上传需管理员权限
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
 
       <div className="max-w-7xl mx-auto px-4 py-6">
         {/* 查询表单 */}
@@ -885,14 +966,7 @@ export default function PriceQueryPage() {
           <div className="flex items-center gap-2 text-sm text-gray-400">
             <span>📤</span>
             <span>上传供应商最新报价表</span>
-            {!authUser && (
-              <button onClick={() => setShowLogin(true)} className="text-blue-500 underline text-xs ml-2">
-                登录后使用
-              </button>
-            )}
-            {authUser && authUser.role !== "admin" && (
-              <span className="text-xs text-amber-500 ml-2">（仅管理员可用）</span>
-            )}
+            <span className="text-xs text-amber-500 ml-2">（仅管理员可用）</span>
           </div>
         </div>
         )}
