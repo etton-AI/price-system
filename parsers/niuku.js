@@ -93,8 +93,8 @@ function parseGenericSheet(ws, sheetName, config) {
   for (let ri = layout.dataStartRow; ri < data.length; ri++) {
     const row = data[ri];
     const chName = String(row[layout.channelCol] || "").trim();
-    // FBN: dest in col4 (postal code); FBA: dest in col2
-    const destCol = isFBN ? 4 : layout.destCol;
+    // FBN: dest in col3 (postal code); FBA: dest in col2
+    const destCol = isFBN ? 3 : layout.destCol;
     const dest = String(row[destCol] || "").trim();
 
     if (!dest || dest.length < 2) continue;
@@ -104,6 +104,11 @@ function parseGenericSheet(ws, sheetName, config) {
     // Update channel if col1 has a non-empty value
     if (chName && chName.length > 2 && !chName.includes("下单") && !chName.includes("渠道")) {
       currentChannel = chName;
+    }
+
+    // FBN: col3 is postal code; skip non-postal rows
+    if (isFBN) {
+      if (!/^\d{5}$/.test(dest)) continue; // must be 5-digit postal code
     }
 
     // Determine destination type
