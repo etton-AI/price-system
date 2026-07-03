@@ -140,7 +140,7 @@ function query(params: QueryParams): { results: PriceEntry[]; total: number; bes
       const dm = (r.delivery_method || "");
       const cn = (r.channel_name || "");
       const dt = (r.destination_type || "");
-      return dm.includes("商业") || dm.includes("商私") || cn.includes("商业") || cn.includes("商私") || dt === "zip_zone";
+      return dm.includes("商业") || dm.includes("商私") || cn.includes("商业") || cn.includes("商私") || dt === "zip_zone" || dt === "commercial";
     });
   }
 
