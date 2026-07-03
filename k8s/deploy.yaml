@@ -43,6 +43,27 @@ spec:
           env:
             - name: NODE_ENV
               value: "production"
+            # ── 权限管理环境变量（从 Secret 注入） ──
+            # - name: JWT_SECRET
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: price-system-secret
+            #       key: JWT_SECRET
+            # - name: ADMIN_PASSWORD
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: price-system-secret
+            #       key: ADMIN_PASSWORD
+            # - name: BASIC_USER
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: price-system-secret
+            #       key: BASIC_USER
+            # - name: BASIC_PASS
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: price-system-secret
+            #       key: BASIC_PASS
 ---
 apiVersion: v1
 kind: Service

@@ -179,6 +179,16 @@ export default function PriceQueryPage() {
   const [showSupplierDropdown, setShowSupplierDropdown] = useState(false);
   // 供应商元数据: { name: { countries: [...], latestDate: "2026-06-29" } }
   const [supplierMeta, setSupplierMeta] = useState<Record<string, { countries: string[]; latestDate: string }>>({});
+  // ── 权限管理状态 ──
+  const [authToken, setAuthToken] = useState<string>("");
+  const [authUser, setAuthUser] = useState<{ username: string; role: string } | null>(null);
+  const [showLogin, setShowLogin] = useState(false);
+  const [loginUser, setLoginUser] = useState("");
+  const [loginPass, setLoginPass] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginError, setLoginError] = useState("");
+  // ── 瘦身模式（预留钩子，后续实现 SheetJS 裁剪） ──
+  const [slimMode, setSlimMode] = useState(false);
 
   const lineConfig = LINE_CONFIG[country];
 
@@ -192,6 +202,60 @@ export default function PriceQueryPage() {
       })
       .catch(() => {});
   }, []);
+
+  // ── 权限: 页面加载时从 localStorage 恢复 token 并校验 ──
+  useEffect(() => {
+    const savedToken = localStorage.getItem("pq_token");
+    if (savedToken) {
+      setAuthToken(savedToken);
+      fetch("/api/auth/me", { headers: { Authorization: `Bearer ${savedToken}` } })
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.success && d.user) {
+            setAuthUser(d.user);
+          } else {
+            localStorage.removeItem("pq_token");
+            setAuthToken("");
+          }
+        })
+        .catch(() => {});
+    }
+  }, []);
+
+  // ── 登录处理 ──
+  const handleLogin = async () => {
+    if (!loginUser || !loginPass) return;
+    setLoginLoading(true);
+    setLoginError("");
+    try {
+      const resp = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: loginUser, password: loginPass }),
+      });
+      const data = await resp.json();
+      if (data.success) {
+        setAuthToken(data.token);
+        setAuthUser(data.user);
+        localStorage.setItem("pq_token", data.token);
+        setShowLogin(false);
+        setLoginUser("");
+        setLoginPass("");
+      } else {
+        setLoginError(data.error || "登录失败");
+      }
+    } catch {
+      setLoginError("网络错误");
+    }
+    setLoginLoading(false);
+  };
+
+  // ── 登出处理 ──
+  const handleLogout = () => {
+    setAuthToken("");
+    setAuthUser(null);
+    localStorage.removeItem("pq_token");
+  };
 
   // 当前线路可用的供应商列表（已过滤+含日期）
   const availableSuppliers = ALL_SUPPLIERS.filter((s) => {
@@ -322,7 +386,14 @@ export default function PriceQueryPage() {
       for (let i = 0; i < uploadFiles.length; i++) {
         form.append("files", uploadFiles[i]);
       }
-      const resp = await fetch("/api/price-query/upload", { method: "POST", body: form, signal: AbortSignal.timeout(120000) });
+      const headers: Record<string, string> = {};
+      if (authToken) headers["Authorization"] = `Bearer ${authToken}`;
+      const resp = await fetch("/api/price-query/upload", {
+        method: "POST",
+        headers,
+        body: form,
+        signal: AbortSignal.timeout(120000),
+      });
       let data: { success?: boolean; message?: string; error?: string; totals?: { deduped?: number }; stats?: Record<string, number> };
       try { data = await resp.json(); } catch { data = { success: false, error: `服务器返回 ${resp.status}: ${resp.statusText}` }; }
       if (data.success) {
@@ -393,10 +464,76 @@ export default function PriceQueryPage() {
                 )}
               </p>
             </div>
-            <Link href="/" className="text-blue-200 hover:text-white text-sm underline">← 返回首页</Link>
+            <div className="flex items-center gap-4">
+              {authUser ? (
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-blue-200">
+                    👤 {authUser.username}
+                    <span className={`ml-1 px-1.5 py-0.5 rounded text-xs font-medium ${
+                      authUser.role === "admin" ? "bg-yellow-400 text-yellow-900" : "bg-gray-400 text-gray-900"
+                    }`}>
+                      {authUser.role === "admin" ? "管理员" : "访客"}
+                    </span>
+                  </span>
+                  <button
+                    onClick={handleLogout}
+                    className="text-blue-300 hover:text-white text-xs underline"
+                  >
+                    退出
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowLogin(!showLogin)}
+                  className="text-blue-200 hover:text-white text-sm underline"
+                >
+                  🔐 登录
+                </button>
+              )}
+              <Link href="/" className="text-blue-200 hover:text-white text-sm underline">← 返回首页</Link>
+            </div>
           </div>
         </div>
       </div>
+
+      {/* ── 登录弹窗 ── */}
+      {showLogin && !authUser && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center" onClick={() => setShowLogin(false)}>
+          <div className="bg-white rounded-xl shadow-2xl max-w-sm w-full mx-4 p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-gray-800 mb-4">🔐 登录比价系统</h3>
+            <div className="space-y-3">
+              <input
+                type="text"
+                value={loginUser}
+                onChange={(e) => setLoginUser(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+                placeholder="用户名"
+                autoFocus
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+              />
+              <input
+                type="password"
+                value={loginPass}
+                onChange={(e) => setLoginPass(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+                placeholder="密码"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+              />
+              {loginError && <p className="text-red-500 text-xs">{loginError}</p>}
+              <button
+                onClick={handleLogin}
+                disabled={loginLoading}
+                className="w-full py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 text-sm transition-colors"
+              >
+                {loginLoading ? "登录中..." : "登录"}
+              </button>
+              <p className="text-xs text-gray-400 text-center">
+                查询功能无需登录 · 上传需管理员权限
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="max-w-7xl mx-auto px-4 py-6">
         {/* 查询表单 */}
@@ -637,7 +774,8 @@ export default function PriceQueryPage() {
           </div>
         </div>
 
-        {/* ── 上传区域 ── */}
+        {/* ── 上传区域（仅管理员可见） ── */}
+        {authUser?.role === "admin" ? (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 mb-6">
           <button
             onClick={() => setShowUpload(!showUpload)}
@@ -655,8 +793,20 @@ export default function PriceQueryPage() {
           {showUpload && (
             <div className="mt-4 pt-4 border-t border-gray-100">
               <p className="text-xs text-gray-500 mb-3">
-                上传供应商 Excel 报价表（.xlsx），系统自动识别供应商并更新价格库。支持一次上传多个文件。
+                上传供应商 Excel 报价表（.xlsx，≤15MB），系统自动识别供应商并更新价格库。
               </p>
+
+              {/* ── 瘦身模式钩子（预留，后续实现 SheetJS 裁剪） ── */}
+              <label className="flex items-center gap-2 text-xs text-gray-500 mb-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={slimMode}
+                  onChange={(e) => setSlimMode(e.target.checked)}
+                  className="rounded"
+                />
+                🪄 瘦身模式（仅保留价格列，减小文件体积）
+                {slimMode && <span className="text-amber-500 font-medium">功能开发中，敬请期待...</span>}
+              </label>
 
               {/* 文件拖拽区 */}
               <div
@@ -674,7 +824,7 @@ export default function PriceQueryPage() {
               >
                 <input
                   type="file"
-                  accept=".xlsx,.xls"
+                  accept=".xlsx"
                   multiple
                   className="hidden"
                   id="upload-input"
@@ -694,7 +844,7 @@ export default function PriceQueryPage() {
                   ) : (
                     <div>
                       <p className="text-gray-500 text-sm">拖拽 Excel 文件到此处，或<span className="text-blue-600">点击选择</span></p>
-                      <p className="text-gray-400 text-xs mt-1">支持 .xlsx / .xls 格式</p>
+                      <p className="text-gray-400 text-xs mt-1">仅支持 .xlsx 格式，单文件 ≤15MB</p>
                     </div>
                   )}
                 </label>
@@ -730,6 +880,22 @@ export default function PriceQueryPage() {
             </div>
           )}
         </div>
+        ) : (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5 mb-6">
+          <div className="flex items-center gap-2 text-sm text-gray-400">
+            <span>📤</span>
+            <span>上传供应商最新报价表</span>
+            {!authUser && (
+              <button onClick={() => setShowLogin(true)} className="text-blue-500 underline text-xs ml-2">
+                登录后使用
+              </button>
+            )}
+            {authUser && authUser.role !== "admin" && (
+              <span className="text-xs text-amber-500 ml-2">（仅管理员可用）</span>
+            )}
+          </div>
+        </div>
+        )}
 
         {/* 最优推荐 */}
         {best && (

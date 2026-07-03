@@ -121,6 +121,9 @@ function parseXinyun(filePath) {
   const wb = XLSX.readFile(filePath);
   const all = [];
 
+  // 诊断: 打印所有 Sheet 名
+  console.log(`[丰运] 文件包含 ${wb.SheetNames.length} 个Sheet: ${wb.SheetNames.join(", ")}`);
+
   const configs = [
     { name: "欧洲海运一口价", fn: (ws) => parseCityColSheet(ws, "欧洲海运一口价", {
       country: "欧线", tm: "海运",
@@ -171,15 +174,42 @@ function parseXinyun(filePath) {
     })},
   ];
 
+  // 匹配并解析每个配置（精确匹配 > trim匹配 > 关键词包含匹配）
+  const matchedSheets = [];
   for (const cfg of configs) {
-    if (wb.SheetNames.includes(cfg.name)) {
+    // 精确匹配 (含尾部空格处理)
+    const exact = wb.SheetNames.find((n) => n === cfg.name || n.trim() === cfg.name);
+    if (exact) {
       try {
-        const r = cfg.fn(wb.Sheets[cfg.name]);
-        console.log(`  [${cfg.name}] ${r.length} 条`);
+        const r = cfg.fn(wb.Sheets[exact]);
+        console.log(`  [${exact}] ${r.length} 条`);
         all.push(...r);
-      } catch (err) { console.error(`  [${cfg.name}] 失败: ${err.message}`); }
+        matchedSheets.push(exact);
+      } catch (err) { console.error(`  [${exact}] 失败: ${err.message}`); }
+      continue;
+    }
+    // 宽松匹配: Sheet 名包含 config 名的核心关键词
+    const keyword = cfg.name.replace(/[ 　]/g, "").slice(0, 4);
+    const fuzzy = wb.SheetNames.filter(n =>
+      !matchedSheets.includes(n) &&
+      n !== "目录" &&
+      n.replace(/[ 　]/g, "").includes(keyword)
+    );
+    for (const fn of fuzzy) {
+      try {
+        const r = cfg.fn(wb.Sheets[fn]);
+        console.log(`  [${fn}] (→${cfg.name}) ${r.length} 条`);
+        all.push(...r);
+        matchedSheets.push(fn);
+      } catch (err) { console.error(`  [${fn}] 失败: ${err.message}`); }
     }
   }
+
+  const unmatched = wb.SheetNames.filter(n => !matchedSheets.includes(n) && n !== "目录");
+  if (unmatched.length > 0) {
+    console.log(`[丰运] ⚠ 未匹配的Sheet (${unmatched.length}): ${unmatched.join(", ")}`);
+  }
+
   console.log(`[丰运] 总计 ${all.length} 条`);
   return all;
 }

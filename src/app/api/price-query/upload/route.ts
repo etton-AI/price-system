@@ -3,14 +3,19 @@
  * POST /api/price-query/upload
  *
  * 接收 Excel 文件 → 自动识别供应商 → 解析 → 合并入库 → 刷新缓存
+ * ⚠ 仅 admin 角色可调用，需 JWT Bearer token
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { refreshCache, getDataPath, type PriceEntry } from "@/lib/price-store";
+import { extractBearerToken, verifyToken, logUpload } from "@/lib/auth";
 import fs from "fs";
 import path from "path";
 import os from "os";
 import { createRequire } from "module";
+
+/** 最大上传文件大小: 15MB */
+const MAX_FILE_SIZE = 15 * 1024 * 1024;
 
 interface PriceEntryWithCountry extends PriceEntry {
   country?: string;
@@ -160,6 +165,22 @@ function parseWithNode(filePath: string, supplier: string): PriceEntry[] {
 
 export async function POST(request: NextRequest) {
   try {
+    // ── 鉴权: 仅 admin 可上传 ──
+    const token = extractBearerToken(request.headers.get("authorization"));
+    if (!token) {
+      return NextResponse.json({ success: false, error: "未提供认证令牌，仅管理员可上传" }, { status: 401 });
+    }
+    let jwtUser: { username: string; role: string };
+    try {
+      const payload = await verifyToken(token);
+      jwtUser = { username: payload.sub, role: payload.role };
+      if (payload.role !== "admin") {
+        return NextResponse.json({ success: false, error: "仅管理员可上传报价表" }, { status: 403 });
+      }
+    } catch {
+      return NextResponse.json({ success: false, error: "令牌无效或已过期" }, { status: 401 });
+    }
+
     const formData = await request.formData();
     const files = formData.getAll("files") as File[];
 
@@ -173,7 +194,21 @@ export async function POST(request: NextRequest) {
 
     // 逐个处理上传的文件
     for (const file of files) {
-      if (!file.name.endsWith(".xlsx") && !file.name.endsWith(".xls")) {
+      // ── 格式校验: 仅 .xlsx ──
+      if (!file.name.endsWith(".xlsx")) {
+        console.log(`[upload] ⏭ 跳过非 xlsx 文件: ${file.name}`);
+        continue;
+      }
+
+      // ── 大小校验: ≤15MB ──
+      if (file.size > MAX_FILE_SIZE) {
+        console.log(`[upload] ⏭ 文件过大 (${(file.size / 1024 / 1024).toFixed(1)}MB): ${file.name}`);
+        results.push({
+          file: file.name,
+          supplier: "跳过",
+          count: 0,
+          effectiveDate: "",
+        });
         continue;
       }
 
@@ -278,6 +313,21 @@ export async function POST(request: NextRequest) {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
     fs.writeFileSync(dataPath, JSON.stringify(output), "utf-8");
+
+    // ── 记录操作日志 ──
+    for (const r of results) {
+      if (r.count > 0) {
+        logUpload({
+          timestamp: new Date().toISOString(),
+          username: jwtUser.username,
+          fileName: r.file,
+          fileSize: files.find((f) => f.name === r.file)?.size || 0,
+          recordCount: r.count,
+          supplier: r.supplier,
+          result: "success",
+        });
+      }
+    }
 
     // 刷新内存缓存
     refreshCache();
