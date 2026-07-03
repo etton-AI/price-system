@@ -119,39 +119,48 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: "未能从上传文件中解析到任何价格数据" }, { status: 400 });
     }
 
-    // ── 合并到现有数据库 ──
-    // 读取现有数据
+    // ── 合并到现有数据库（内存优化：单遍构建，避免多份中间数组） ──
     const dataPath = getDataPath();
-    let existingData: PriceEntry[] = [];
-    if (fs.existsSync(dataPath)) {
-      const raw = JSON.parse(fs.readFileSync(dataPath, "utf-8"));
-      existingData = raw.data || [];
-    }
-
-    // 去掉被更新供应商+国家的旧数据（同供应商不同国家的数据保留）
     const updatedCountries = new Set(allNewRecords.map((r) => (r as PriceEntryWithCountry).country || "美国"));
     const updatedSuppliers = Array.from(suppliersUpdated);
-    const preserved = existingData.filter(
-      (r: PriceEntry) => {
-        const entry = r as PriceEntryWithCountry;
-        const rc = entry.country || "美国";
+
+    console.log(`[upload] 新增: ${allNewRecords.length} 条 (国家: ${[...updatedCountries].join(",")})`);
+
+    // 构建 merged 数组：先保留未更新的数据，再加新数据
+    const seen = new Set<string>();
+    const finalData: PriceEntry[] = [];
+    let preservedCount = 0;
+
+    if (fs.existsSync(dataPath)) {
+      const raw = JSON.parse(fs.readFileSync(dataPath, "utf-8"));
+      const existingData: PriceEntry[] = raw.data || [];
+
+      // 第一遍：保留不属于被更新供应商+国家的数据
+      for (const r of existingData) {
+        const rc = (r as PriceEntryWithCountry).country || "美国";
         const sameSupplier = updatedSuppliers.some((s) => r.supplier.includes(s) || s.includes(r.supplier));
         const sameCountry = updatedCountries.has(rc);
-        return !(sameSupplier && sameCountry);
+        if (!(sameSupplier && sameCountry)) {
+          const key = `${r.supplier}|${r.channel_name}|${r.destination_code}|${r.origin_region}|${r.billing_type}|${r.min_quantity}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            finalData.push(r);
+            preservedCount++;
+          }
+        }
       }
-    );
+      // 释放原始 JSON 对象引用，帮助 GC
+      (raw as unknown as Record<string, unknown>).data = null;
+    }
 
-    console.log(`[upload] 保留其他数据: ${preserved.length} 条, 新增: ${allNewRecords.length} 条 (国家: ${[...updatedCountries].join(",")})`);
+    console.log(`[upload] 保留其他数据: ${preservedCount} 条`);
 
-    // 合并且去重
-    const merged = [...preserved, ...allNewRecords];
-    const seen = new Set<string>();
-    const deduped: PriceEntry[] = [];
-    for (const r of merged) {
+    // 第二遍：加入新数据（去重）
+    for (const r of allNewRecords) {
       const key = `${r.supplier}|${r.channel_name}|${r.destination_code}|${r.origin_region}|${r.billing_type}|${r.min_quantity}`;
       if (!seen.has(key)) {
         seen.add(key);
-        deduped.push(r);
+        finalData.push(r);
       }
     }
 
@@ -163,7 +172,7 @@ export async function POST(request: NextRequest) {
       "华威尔": "huaweier", "凯鑫": "kaixin", "新胜": "xinsheng", "美琦": "meiqi",
     };
     const stats: Record<string, number> = {};
-    for (const r of deduped) {
+    for (const r of finalData) {
       let key = "other";
       for (const [name, slug] of Object.entries(supplierStatsMap)) {
         if (r.supplier.includes(name)) { key = slug; break; }
@@ -174,9 +183,9 @@ export async function POST(request: NextRequest) {
     // 写入文件
     const output = {
       generated_at: new Date().toISOString(),
-      total_records: deduped.length,
+      total_records: finalData.length,
       stats,
-      data: deduped,
+      data: finalData,
     };
 
     // 确保目录存在
@@ -184,6 +193,7 @@ export async function POST(request: NextRequest) {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
     fs.writeFileSync(dataPath, JSON.stringify(output), "utf-8");
+    console.log(`[upload] 💾 已写入 ${finalData.length} 条记录`);
 
     // ── 记录操作日志 ──
     for (const r of results) {
@@ -200,10 +210,10 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 刷新内存缓存
+    // 刷新内存缓存（惰性加载，不立即读取文件）
     refreshCache();
 
-    const dupRemoved = allNewRecords.length + preserved.length - deduped.length;
+    const dupRemoved = allNewRecords.length + preservedCount - finalData.length;
 
     return NextResponse.json({
       success: true,
@@ -211,8 +221,8 @@ export async function POST(request: NextRequest) {
       files: results,
       totals: {
         new: allNewRecords.length,
-        preserved: preserved.length,
-        deduped: deduped.length,
+        preserved: preservedCount,
+        deduped: finalData.length,
         dupRemoved,
       },
       stats,

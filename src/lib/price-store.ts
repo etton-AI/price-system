@@ -53,10 +53,10 @@ export function getData(): PriceData {
   return cache;
 }
 
-/** 刷新缓存（上传新数据后调用） */
+/** 刷新缓存（上传新数据后调用，延迟加载避免双倍内存） */
 export function refreshCache(): void {
   cache = null;
-  getData(); // 立即重新加载
+  // 不立即重新加载 —— 下次查询时惰性加载，避免上传请求内存峰值翻倍
 }
 
 /** 获取数据文件路径 */
