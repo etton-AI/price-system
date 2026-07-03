@@ -12,7 +12,6 @@ import { extractBearerToken, verifyToken, logUpload } from "@/lib/auth";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { createRequire } from "module";
 
 /** 最大上传文件大小: 15MB */
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
@@ -21,9 +20,16 @@ interface PriceEntryWithCountry extends PriceEntry {
   country?: string;
 }
 
+/**
+ * 获取原始 Node.js require（不被 webpack 打包）
+ * 通过 eval 绕过 webpack 的静态分析，确保 require("xlsx") 正确解析
+ */
+const nodeRequire: NodeRequire = eval("require");
+
 // 从 parsers 目录创建 require，确保 xlsx 等依赖能正确解析
 const parsersDir = path.join(process.cwd(), "parsers");
-const parsersRequire = createRequire(path.join(parsersDir, "_index.js"));
+console.log(`[upload] parsersDir=${parsersDir}, exists=${fs.existsSync(parsersDir)}`);
+const parsersRequire = nodeRequire("module").createRequire(path.join(parsersDir, "_index.js"));
 
 /** 与 build_db.js 一致的供应商识别 */
 function identifySupplier(fileName: string): string | null {
@@ -123,22 +129,24 @@ function parseWithNode(filePath: string, supplier: string): PriceEntry[] {
   const parserKeys = getParserKeys(supplier);
   const allResults: PriceEntry[] = [];
   const parsedLines: string[] = [];
+  const parserErrors: string[] = [];
 
   for (const key of parserKeys) {
     const entry = PARSER_REGISTRY[key];
-    if (!entry) continue;
+    if (!entry) { parserErrors.push(`${key}: 无注册信息`); continue; }
 
     try {
       const mod = parsersRequire("./" + entry.file);
       const parseFn = mod[entry.exportName];
       if (typeof parseFn !== "function") {
-        console.warn(`[upload] ⚠ ${entry.file} 未导出 ${entry.exportName}，跳过`);
+        const msg = `${key}: ${entry.file} 未导出 ${entry.exportName}`;
+        console.warn(`[upload] ⚠ ${msg}`);
+        parserErrors.push(msg);
         continue;
       }
 
       const results: PriceEntry[] = parseFn(filePath);
       if (results.length > 0) {
-        // 标记数据来源文件和生效日期
         for (const r of results) {
           r.source_file = fileName;
           r.effective_date = effectiveDate;
@@ -146,16 +154,20 @@ function parseWithNode(filePath: string, supplier: string): PriceEntry[] {
         allResults.push(...results);
         parsedLines.push(`${key}(${results.length}条)`);
         console.log(`[upload]   ✅ ${key}: ${results.length} 条`);
+      } else {
+        parserErrors.push(`${key}: 解析完成但返回0条数据`);
       }
     } catch (err) {
-      // 某个子解析器失败不影响其他解析器（该线路可能不存在于此文件）
-      console.log(`[upload]   ⏭ ${key}: 无匹配数据 (${(err as Error).message.slice(0, 60)})`);
+      const msg = `${key}: ${(err as Error).message}`;
+      console.error(`[upload]   ❌ ${msg}`);
+      parserErrors.push(msg);
     }
   }
 
   if (allResults.length === 0) {
+    const detail = parserErrors.length > 0 ? ` 详情: ${parserErrors.join("; ")}` : "";
     throw new Error(
-      `文件 "${fileName}" 未能解析出任何价格数据。尝试的解析器: ${parserKeys.join(", ")}`
+      `文件 "${fileName}" 未能解析出任何价格数据。${detail}`
     );
   }
 
