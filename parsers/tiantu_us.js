@@ -575,6 +575,21 @@ function parseTiantu(filePath) {
     allResults.push(...results);
   }
 
+  // ── 美国商业/私人地址邮编系列 Sheets ──
+  const usCommercialSheets = [
+    "美西90-92邮编系列", "芝加哥60邮编系列", "纽约07-08邮编系列",
+    "萨凡纳30-31邮编商业", "休斯顿77邮编系列",
+  ];
+  for (const sn of usCommercialSheets) {
+    if (wb.SheetNames.includes(sn)) {
+      try {
+        const results = parseCommercialSheet(wb.Sheets[sn], sn);
+        console.log(`  [${sn}] ${results.length} 条 → 商业地址`);
+        allResults.push(...results);
+      } catch (err) { console.error(`  [${sn}] 失败: ${err.message}`); }
+    }
+  }
+
   // 英国 Sheets — 复用 tiantu_uk 解析器（合并文件含英国数据）
   const ukSheetNames = [
     "英国铁运专线(18-23)", "英国中英专车(20-25)", "苏新号-英国卡航20日达",
@@ -593,6 +608,95 @@ function parseTiantu(filePath) {
 
   console.log(`[天图] 总计解析 ${allResults.length} 条价格记录`);
   return allResults;
+}
+
+/** 商业地址邮编Sheet解析: 提取邮编作为dest_code */
+function parseCommercialSheet(ws, sheetName) {
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+  if (data.length < 7) return [];
+  const results = [];
+
+  // Determine region from sheet name
+  let region = "美西";
+  if (sheetName.includes("芝加哥") || sheetName.includes("60")) region = "美中";
+  else if (sheetName.includes("纽约") || sheetName.includes("07")) region = "美东";
+  else if (sheetName.includes("萨凡纳") || sheetName.includes("30")) region = "美东";
+  else if (sheetName.includes("休斯顿") || sheetName.includes("77")) region = "美中";
+
+  // Determine channel name
+  let channelName = "商业地址";
+  if (sheetName.includes("90-92") || sheetName.includes("美西")) channelName = "美西商业地址-90-92邮编";
+  else if (sheetName.includes("芝加哥") || sheetName.includes("60")) channelName = "芝加哥商业地址-60邮编";
+  else if (sheetName.includes("纽约") || sheetName.includes("07")) channelName = "纽约商业地址-07-08邮编";
+  else if (sheetName.includes("萨凡纳") || sheetName.includes("30")) channelName = "萨凡纳商业地址-30-31邮编";
+  else if (sheetName.includes("休斯顿") || sheetName.includes("77")) channelName = "休斯顿商业地址-77邮编";
+
+  for (let ri = 7; ri < data.length; ri++) {
+    const row = data[ri];
+    const col0 = String(row[0] || "").trim();
+    const col1 = String(row[1] || "").trim();
+    if (!col0 && !col1) continue;
+    if (col0.includes("仓库代码") || col0.includes("注意")) continue;
+
+    // Extract postal codes from col0 (e.g., "易达云-91761") or col1 (e.g., "60440/60490")
+    const postalCodes = [];
+    // From col0: match "XXXXX" or "-XXXXX"
+    const pc0 = col0.match(/(\d{5})/g);
+    if (pc0) postalCodes.push(...pc0);
+    // From col1: match "XXXXX" or "XXXXX/XXXXX"
+    const pc1 = col1.match(/(\d{5})/g);
+    if (pc1) postalCodes.push(...pc1);
+
+    // Fallback: use col0 as dest if no postal code found
+    const dests = postalCodes.length > 0 ? [...new Set(postalCodes)] : [col0.replace(/^[^-]+-/, "") || col0];
+
+    // Prices in cols 2-9 (8 city groups × 300kg+)
+    const cityGroups = [
+      { label: "华南", cities: ["深圳", "广州", "中山", "东莞南城", "惠州"] },
+      { label: "重庆", cities: ["重庆"] },
+      { label: "汕头", cities: ["汕头"] },
+      { label: "厦门/泉州/福州", cities: ["厦门", "泉州", "福州"] },
+      { label: "华东", cities: ["义乌", "上海", "宁波", "苏州", "杭州", "绍兴"] },
+      { label: "青岛/郑州等", cities: ["青岛", "郑州", "温州", "台州", "连云港", "南京", "合肥"] },
+      { label: "天津/南昌/石家庄", cities: ["天津", "南昌", "石家庄"] },
+      { label: "济南/潍坊", cities: ["济南", "潍坊"] },
+    ];
+
+    for (const dest of dests) {
+      for (let ci = 0; ci < cityGroups.length && (2 + ci) < row.length; ci++) {
+        const price = parseFloat(row[2 + ci]);
+        if (isNaN(price) || price <= 0 || price > 99999) continue;
+
+        results.push({
+          supplier: "天图通逊",
+          country: "美国",
+          channel_name: channelName,
+          transport_mode: "海运",
+          vessel_config: sheetName.includes("芝加哥") ? "海铁" : sheetName.includes("纽约") ? "直航" : "海运",
+          vessel_tags: ["海运", "商业地址"],
+          delivery_method: "卡派",
+          destination_type: "commercial",
+          destination_code: dest,
+          destination_region: region,
+          origin_region: cityGroups[ci].label,
+          origin_cities: cityGroups[ci].cities,
+          billing_type: "包税",
+          tax_mode: "包税",
+          min_quantity: "300KG+",
+          min_quantity_value: 300,
+          unit_price: price,
+          price_unit: "元/KG",
+          transit_time_min: null,
+          transit_time_max: null,
+          transit_time_desc: "",
+          claim_rule: "",
+          effective_date: "",
+          source_sheet: sheetName,
+        });
+      }
+    }
+  }
+  return results;
 }
 
 module.exports = { parseTiantu };
