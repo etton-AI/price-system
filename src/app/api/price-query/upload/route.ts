@@ -20,156 +20,19 @@ interface PriceEntryWithCountry extends PriceEntry {
   country?: string;
 }
 
-// 从 parsers 目录获取解析器 require — 使用 loader.js 作锚点
-// loader.js 在 src/ 外部，不会被 webpack 打包，require("xlsx") 可正确解析
+// 通过 require("module").createRequire 创建原生 Node.js require
+// 锚定到 parsers/_index.js，所有通过 parsersRequire 加载的模块
+// 都使用原生 Node.js 模块解析（绕过 webpack 打包）
 const parsersDir = path.join(process.cwd(), "parsers");
 console.log(`[upload] parsersDir=${parsersDir}, exists=${fs.existsSync(parsersDir)}`);
+
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const parsersRequire = require("module").createRequire(path.join(parsersDir, "loader.js"));
+const parsersRequire = require("module").createRequire(path.join(parsersDir, "_index.js"));
 
-/** 与 build_db.js 一致的供应商识别 */
-function identifySupplier(fileName: string): string | null {
-  const n = fileName.toLowerCase();
-  // 跳过非价格表文件（船期表、出运计划等）
-  if (n.includes("出运计划") || n.includes("船期") || n.includes("schedule")) return "skip";
-  // 天图英国（必须不含"美"）
-  if ((n.includes("天图") || n.includes("tiantu")) && n.includes("英国") && !n.includes("美")) return "tiantu_uk";
-  // 天图空运（必须在普通 tiantu 之前）
-  if ((n.includes("天图") || n.includes("tiantu")) && (n.includes("空运") || n.includes("air"))) return "tiantu_air";
-  if (n.includes("皓辉") || n.includes("haohui")) return "haohui";
-  if (n.includes("皓鹏") || n.includes("haopeng")) return "haopeng";
-  if (n.includes("星链") || n.includes("xinglian")) return "xinglian";
-  if (n.includes("心一") || n.includes("xinyi")) return "xinyi";
-  if (n.includes("航乐") || n.includes("hangle") || n.includes("yue")) return "hangle";
-  if (n.includes("etton") || n.includes("易通")) return "etton";
-  if (n.includes("天图") || n.includes("tiantu")) return "tiantu";
-  if (n.includes("英美") || n.includes("yingmei")) return "yingmei";
-  if (n.includes("丰运") || n.includes("fengyun")) return "fengyun";
-  if (n.includes("华威尔") || n.includes("huaweier")) return "huaweier";
-  if (n.includes("凯鑫") || n.includes("kaixin")) return "kaixin";
-  if (n.includes("新胜") || n.includes("xinsheng")) return "xinsheng";
-  if (n.includes("美琦") || n.includes("meiqi")) return "meiqi";
-  if (n.includes("劲港") || n.includes("jingang")) return "jingang";
-  if (n.includes("瑞秋") || n.includes("ruiqiu")) return "ruiqiu";
-  if (n.includes("纽酷") || n.includes("niuku")) return "niuku";
-  if (n.includes("博创兴") || n.includes("bochuangxing")) return "bochuangxing";
-  if (n.includes("环洋") || n.includes("hye")) return "hye";
-  return null;
-}
-
-/** 解析器文件名 → 导出函数名映射 */
-const PARSER_REGISTRY: Record<string, { file: string; exportName: string }> = {
-  etton:      { file: "etton_us.js",    exportName: "parseETTON" },
-  tiantu:     { file: "tiantu_us.js",   exportName: "parseTiantu" },
-  tiantu_uk:  { file: "tiantu_uk.js",   exportName: "parseTiantuUK" },
-  tiantu_air: { file: "tiantu_air.js",  exportName: "parseTiantuAir" },
-  yingmei:    { file: "yingmei_us.js",  exportName: "parseYingmei" },
-  haohui:     { file: "haohui_us.js",   exportName: "parseHaohui" },
-  haopeng:    { file: "haopeng_us.js",  exportName: "parseHaopeng" },
-  xinglian:   { file: "xinglian_us.js", exportName: "parseXinglian" },
-  xinyi:      { file: "xinyi_eu.js",    exportName: "parseXinyi" },
-  hangle:     { file: "hangle.js",      exportName: "parseHangle" },
-  fengyun:    { file: "fengyun.js",     exportName: "parseXinyun" },
-  huaweier:   { file: "huaweier.js",    exportName: "parseHuaweier" },
-  kaixin:     { file: "kaixin.js",      exportName: "parseKaixin" },
-  xinsheng:   { file: "xinsheng.js",    exportName: "parseXinsheng" },
-  meiqi:      { file: "meiqi_us.js",    exportName: "parseMeiQi" },
-  jingang:    { file: "jingang.js",     exportName: "parseJingang" },
-  ruiqiu:     { file: "ruiqiu.js",      exportName: "parseRuiqiu" },
-  niuku:      { file: "niuku.js",       exportName: "parseNiuku" },
-  bochuangxing: { file: "bochuangxing.js", exportName: "parseBochuangxing" },
-  hye:        { file: "hye.js",         exportName: "parseHYE" },
-};
-
-/** 多线路供应商：同一 Excel 可能包含多个国家的 Sheet，需依次尝试所有子解析器 */
-const SUPPLIER_PARSER_GROUP: Record<string, string[]> = {
-  tiantu: ["tiantu", "tiantu_uk", "tiantu_air"],
-};
-
-/** 根据识别出的供应商 key 返回需要尝试的全部解析器 */
-function getParserKeys(supplier: string): string[] {
-  const base = supplier.replace(/_(uk|air|us)$/, "");
-  return SUPPLIER_PARSER_GROUP[base] || [supplier];
-}
-
-function parseWithNode(filePath: string, supplier: string): PriceEntry[] {
-  const fileName = path.basename(filePath);
-
-  // 自动识别供应商
-  if (!supplier) {
-    const identified = identifySupplier(fileName);
-    if (!identified) {
-      throw new Error(
-        `无法识别供应商，文件名需包含供应商标识（如 ETTON/易通、天图/tiantu、英美/yingmei、皓辉/haohui、皓鹏/haopeng、星链/xinglian 等）`
-      );
-    }
-    if (identified === "skip") {
-      throw new Error(`非价格表文件（船期/出运计划），已跳过: ${fileName}`);
-    }
-    supplier = identified;
-  }
-
-  // 提取生效日期
-  let effectiveDate = "";
-  const dm1 = fileName.match(/(\d{4})[年.-]?(\d{1,2})[月.-]?(\d{1,2})/);
-  if (dm1) {
-    effectiveDate = `${dm1[1]}-${String(dm1[2]).padStart(2, "0")}-${String(dm1[3]).padStart(2, "0")}`;
-  } else {
-    const dm2 = fileName.match(/(\d{1,2})[.·](\d{1,2})/);
-    if (dm2) {
-      effectiveDate = `${new Date().getFullYear()}-${String(parseInt(dm2[1])).padStart(2, "0")}-${String(parseInt(dm2[2])).padStart(2, "0")}`;
-    }
-  }
-
-  // 多线路供应商：依次尝试所有子解析器，各取对应 Sheet 的数据
-  const parserKeys = getParserKeys(supplier);
-  const allResults: PriceEntry[] = [];
-  const parsedLines: string[] = [];
-  const parserErrors: string[] = [];
-
-  for (const key of parserKeys) {
-    const entry = PARSER_REGISTRY[key];
-    if (!entry) { parserErrors.push(`${key}: 无注册信息`); continue; }
-
-    try {
-      const mod = parsersRequire("./" + entry.file);
-      const parseFn = mod[entry.exportName];
-      if (typeof parseFn !== "function") {
-        const msg = `${key}: ${entry.file} 未导出 ${entry.exportName}`;
-        console.warn(`[upload] ⚠ ${msg}`);
-        parserErrors.push(msg);
-        continue;
-      }
-
-      const results: PriceEntry[] = parseFn(filePath);
-      if (results.length > 0) {
-        for (const r of results) {
-          r.source_file = fileName;
-          r.effective_date = effectiveDate;
-        }
-        allResults.push(...results);
-        parsedLines.push(`${key}(${results.length}条)`);
-        console.log(`[upload]   ✅ ${key}: ${results.length} 条`);
-      } else {
-        parserErrors.push(`${key}: 解析完成但返回0条数据`);
-      }
-    } catch (err) {
-      const msg = `${key}: ${(err as Error).message}`;
-      console.error(`[upload]   ❌ ${msg}`);
-      parserErrors.push(msg);
-    }
-  }
-
-  if (allResults.length === 0) {
-    const detail = parserErrors.length > 0 ? ` 详情: ${parserErrors.join("; ")}` : "";
-    throw new Error(
-      `文件 "${fileName}" 未能解析出任何价格数据。${detail}`
-    );
-  }
-
-  console.log(`[upload] 📊 总计: ${allResults.length} 条 (线路: ${parsedLines.join(" + ")})`);
-  return allResults;
-}
+// 通过 parsersRequire 加载 loader.js（原生 require 环境）
+// loader.js 内部的 require("xlsx") 等调用均使用原生 Node.js 解析
+const { parseFile } = parsersRequire("./loader.js");
+console.log(`[upload] loader 加载成功, parseFile=${typeof parseFile}`);
 
 export async function POST(request: NextRequest) {
   try {
@@ -229,7 +92,8 @@ export async function POST(request: NextRequest) {
       fs.writeFileSync(tmpFile, Buffer.from(bytes));
 
       try {
-        const records = parseWithNode(tmpFile, "");
+        // 调用 loader.js 的 parseFile（原生 Node.js require 环境，可直接 require("xlsx")）
+        const records = parseFile(tmpFile, "") as PriceEntry[];
         allNewRecords.push(...records);
 
         if (records.length > 0) {
@@ -298,7 +162,6 @@ export async function POST(request: NextRequest) {
       "心一": "xinyi", "航乐": "hangle", "丰运": "fengyun",
       "华威尔": "huaweier", "凯鑫": "kaixin", "新胜": "xinsheng", "美琦": "meiqi",
     };
-    // 天图细分：有 country 字段后，检查是否包含英国/空运标记
     const stats: Record<string, number> = {};
     for (const r of deduped) {
       let key = "other";
