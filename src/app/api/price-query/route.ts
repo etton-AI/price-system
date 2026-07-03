@@ -157,12 +157,18 @@ function query(params: QueryParams): { results: PriceEntry[]; total: number; bes
     });
   }
 
-  // 1. 目的仓
+  // 0.6 过滤 0 价格脏数据
+  results = results.filter((r) => r.unit_price > 0);
+
+  // 1. 目的仓（支持复合代码如 "YYZ/YHM/YOO" 的部分匹配）
   if (params.dest) {
     const dest = params.dest.toUpperCase();
     results = results.filter((r) => {
       if (r.destination_type === "none" || r.destination_code === "*") return false;
-      return r.destination_code.toUpperCase() === dest;
+      const code = r.destination_code.toUpperCase();
+      if (code === dest) return true;
+      // 复合代码拆分匹配: "YYZ/YHM/YOO" 匹配 "YYZ"
+      return code.split("/").map((s: string) => s.trim()).some((part: string) => part === dest);
     });
   }
 
