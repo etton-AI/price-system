@@ -7,6 +7,10 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { refreshCache, getDataPath, type PriceEntry } from "@/lib/price-store";
+
+interface PriceEntryWithCountry extends PriceEntry {
+  country?: string;
+}
 import fs from "fs";
 import path from "path";
 import os from "os";
