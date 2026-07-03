@@ -219,13 +219,20 @@ export async function POST(request: NextRequest) {
       existingData = raw.data || [];
     }
 
-    // 去掉被更新供应商的旧数据
+    // 去掉被更新供应商+国家的旧数据（同供应商不同国家的数据保留）
+    const updatedCountries = new Set(allNewRecords.map((r) => (r as PriceEntryWithCountry).country || "美国"));
     const updatedSuppliers = Array.from(suppliersUpdated);
     const preserved = existingData.filter(
-      (r: PriceEntry) => !updatedSuppliers.some((s) => r.supplier.includes(s) || s.includes(r.supplier))
+      (r: PriceEntry) => {
+        const entry = r as PriceEntryWithCountry;
+        const rc = entry.country || "美国";
+        const sameSupplier = updatedSuppliers.some((s) => r.supplier.includes(s) || s.includes(r.supplier));
+        const sameCountry = updatedCountries.has(rc);
+        return !(sameSupplier && sameCountry);
+      }
     );
 
-    console.log(`[upload] 保留其他供应商: ${preserved.length} 条, 新增: ${allNewRecords.length} 条`);
+    console.log(`[upload] 保留其他数据: ${preserved.length} 条, 新增: ${allNewRecords.length} 条 (国家: ${[...updatedCountries].join(",")})`);
 
     // 合并且去重
     const merged = [...preserved, ...allNewRecords];
@@ -281,8 +288,8 @@ export async function POST(request: NextRequest) {
       files: results,
       totals: {
         new: allNewRecords.length,
-        preserved,
-        deduped,
+        preserved: preserved.length,
+        deduped: deduped.length,
         dupRemoved,
       },
       stats,
