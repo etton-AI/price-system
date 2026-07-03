@@ -249,7 +249,7 @@ function query(params: QueryParams): { results: PriceEntry[]; total: number; bes
   if (params.supplier) {
     const suppliers = params.supplier.split(/[,，]/).map(s => s.trim().toLowerCase()).filter(Boolean);
     const supplierMap: Record<string, string> = {
-      "etton": "易通", "易通": "易通",
+      "etton": "易通", "易通": "易通", "etton易通": "易通",
       "天图": "天图", "tiantu": "天图",
       "英美": "英美", "yingmei": "英美",
       "皓辉": "皓辉", "haohui": "皓辉",
