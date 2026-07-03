@@ -23,6 +23,7 @@ interface QueryParams {
   best?: boolean;
   country?: string;
   dg?: boolean;
+  commercial?: boolean;
   transport_mode?: string;
 }
 
@@ -130,6 +131,16 @@ function query(params: QueryParams): { results: PriceEntry[]; total: number; bes
       const cn = (r.channel_name || "").toUpperCase();
       const dm = (r.delivery_method || "").toUpperCase();
       return cn.includes("DG") || cn.includes("纯电") || dm.includes("DG");
+    });
+  }
+
+  // 0.4 商业地址过滤
+  if (params.commercial) {
+    results = results.filter((r) => {
+      const dm = (r.delivery_method || "");
+      const cn = (r.channel_name || "");
+      const dt = (r.destination_type || "");
+      return dm.includes("商业") || dm.includes("商私") || cn.includes("商业") || cn.includes("商私") || dt === "zip_zone";
     });
   }
 
@@ -278,6 +289,7 @@ export async function GET(request: NextRequest) {
       dest: searchParams.get("dest") || undefined,
       country: searchParams.get("country") || "美国",
       dg: searchParams.get("dg") === "1" || searchParams.get("dg") === "true",
+      commercial: searchParams.get("commercial") === "1" || searchParams.get("commercial") === "true",
       origin: searchParams.get("origin") || undefined,
       weight: searchParams.get("weight") ? parseFloat(searchParams.get("weight")!) : undefined,
       vessel: searchParams.get("vessel") || undefined,

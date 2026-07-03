@@ -47,7 +47,7 @@ const LINE_CONFIG: Record<string, {
     icon: "🇺🇸",
     transportModes: ["全部", "海运", "空运"],
     warehouses: ["ONT8", "LGB8", "LAX9", "SBD1", "SMF3", "SCK4", "LAS1", "FTW1", "DFW6", "IAH3", "MEM1", "MDW2", "IND9"],
-    supplierDesc: "ETTON · 天图 · 英美 · 皓辉 · 皓鹏 · 星链",
+    supplierDesc: "ETTON · 天图 · 英美 · 皓辉 · 皓鹏 · 星链 · 纽酷 · 劲港 · 瑞秋 · 博创兴 · HYE · 美琦 · 华威尔",
   },
   "英国": {
     label: "英国线",
@@ -97,6 +97,20 @@ const LINE_CONFIG: Record<string, {
     transportModes: ["全部", "海运", "空运"],
     warehouses: ["NRT1", "NRT2", "NRT5", "KIX1", "KIX2", "HND1", "NGO1", "FUK1"],
     supplierDesc: "瑞秋 · 天图",
+  },
+  "越南→美国": {
+    label: "越→美线",
+    icon: "🇻🇳",
+    transportModes: ["全部", "海运"],
+    warehouses: ["ONT8", "LGB8", "LAX9", "SBD1", "FTW1", "MDW2", "TEB3"],
+    supplierDesc: "天图 越美系列",
+  },
+  "商业地址": {
+    label: "商业地址",
+    icon: "🏢",
+    transportModes: ["全部", "海运", "空运", "卡航/专车"],
+    warehouses: [],
+    supplierDesc: "天图 · ETTON · 英美 · 劲港 · 皓鹏 · 纽酷",
   },
   "DG专线": {
     label: "DG专线",
@@ -195,7 +209,9 @@ export default function PriceQueryPage() {
         if (country === "巴西") return meta.countries.includes("巴西");
         if (country === "澳大利亚") return meta.countries.includes("澳大利亚");
         if (country === "日本") return meta.countries.includes("日本");
-        if (country === "DG专线") return true; // DG跨国家，显示所有供应商
+        if (country === "越南→美国") return meta.countries.includes("美国"); // 越→美暂用美国数据
+        if (country === "商业地址") return true;
+        if (country === "DG专线") return true;
       }
     }
     return false;
@@ -237,10 +253,16 @@ export default function PriceQueryPage() {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      // DG专线: 跨国家过滤, 传 dg=1 + country=美国 (作为基础)
+      // DG专线: 跨国家过滤, 传 dg=1 + country=美国
       if (country === "DG专线") {
         params.set("dg", "1");
         params.set("country", "美国");
+      } else if (country === "商业地址") {
+        params.set("commercial", "1");
+        params.set("country", "美国"); // 默认美国，后续可按国家切换
+      } else if (country === "越南→美国") {
+        params.set("country", "美国");
+        params.set("origin", "越南");
       } else {
         params.set("country", country);
       }
