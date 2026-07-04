@@ -187,8 +187,6 @@ export default function PriceQueryPage() {
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState("");
   const [passwordExpired, setPasswordExpired] = useState(false);
-  // ── 瘦身模式（预留钩子，后续实现 SheetJS 裁剪） ──
-  const [slimMode, setSlimMode] = useState(false);
 
   const lineConfig = LINE_CONFIG[country];
 
@@ -873,20 +871,9 @@ export default function PriceQueryPage() {
           {showUpload && (
             <div className="mt-4 pt-4 border-t border-gray-100">
               <p className="text-xs text-gray-500 mb-3">
-                上传供应商 Excel 报价表（.xlsx，≤15MB），系统自动识别供应商并更新价格库。
+                上传供应商最新 Excel 报价表（仅 .xlsx，单文件 ≤15MB）。
+                系统自动识别供应商并合并入库，处理大数据库约需 5-10 秒，请耐心等待。
               </p>
-
-              {/* ── 瘦身模式钩子（预留，后续实现 SheetJS 裁剪） ── */}
-              <label className="flex items-center gap-2 text-xs text-gray-500 mb-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={slimMode}
-                  onChange={(e) => setSlimMode(e.target.checked)}
-                  className="rounded"
-                />
-                🪄 瘦身模式（仅保留价格列，减小文件体积）
-                {slimMode && <span className="text-amber-500 font-medium">功能开发中，敬请期待...</span>}
-              </label>
 
               {/* 文件拖拽区 */}
               <div
