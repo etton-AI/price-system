@@ -1,6 +1,6 @@
 # Price System — 开发者规格文档
 
-> 最后更新: 2026-07-01 | 维护者: berry-bi
+> 最后更新: 2026-07-04 | 维护者: berry-bi
 
 ---
 
@@ -19,7 +19,7 @@
 | Excel 解析 | xlsx (SheetJS) | `^0.18.5` |
 | Lint | ESLint 9 flat config | `^9.27.0` |
 | 运行时 | Node.js 22 (Alpine) | — |
-| 数据格式 | 单文件 JSON (~34MB, 43000+ 条记录) | — |
+| 数据格式 | 单文件 JSON (~56MB, 72000+ 条记录) | — |
 | 部署 | Docker → GHCR → Sealos K8s | — |
 
 ### 仓库信息
@@ -74,8 +74,8 @@ price-system/
 ├── data/
 │   └── prices.json                   # 构建输出 (~34MB)
 ├── public/
-│   └── data/                         # Web 运行时数据目录
-│       └── prices.json               # 同 data/prices.json (build_db 自动复制)
+│   └── data/                         # Web 运行时数据目录 (K8s 挂载 emptyDir)
+│       └── prices.json               # 运行时读写 (~56MB)，上传 API 更新此文件
 ├── src/
 │   ├── app/
 │   │   ├── layout.tsx                # 根布局: html lang=zh-CN
@@ -84,11 +84,16 @@ price-system/
 │   │   ├── price-query/
 │   │   │   └── page.tsx              # ★ 比价查询主页面 (817 行客户端组件)
 │   │   └── api/
+│   │       ├── auth/
+│   │       │   ├── login/route.ts    # POST 管理员/访客登录
+│   │       │   └── me/route.ts       # GET 当前用户信息
 │   │       └── price-query/
-│   │           └── route.ts          # ★ GET 查询 API (305 行)
+│   │           ├── route.ts          # ★ GET 查询 API
+│   │           └── upload/route.ts   # ★ POST 上传 Excel (admin only)
 │   └── lib/
-│       └── price-store.ts            # 数据加载模块（文件缓存）
-├── Dockerfile                        # 双阶段构建（含 build_db 步骤）
+│       ├── price-store.ts            # 数据加载（异步+同步双接口）
+│       └── auth.ts                   # JWT 鉴权 + 操作日志
+├── Dockerfile                        # 三阶段构建 + 启动脚本（PVC种子）
 ├── next.config.ts                    # output: "standalone"
 ├── postcss.config.mjs
 ├── eslint.config.mjs
@@ -116,7 +121,7 @@ price-system/
          │ 设置 source_file 字段
          ▼
 ┌─────────────────────┐
-│  data/prices.json    │  统一 JSON (~34MB, ~43000 条)
+│  data/prices.json    │  统一 JSON (~56MB, ~72000 条)
 │  public/data/        │  (自动复制)
 └────────┬────────────┘
          │
@@ -573,10 +578,8 @@ node parsers/query.js -d ONT8 -t 10 --export csv
 
 ## 5. 非目标（明确没做的）
 
-- ❌ **上传 API (`POST /api/price-query/upload`)**: 页面引用了上传端点，但 `route.ts` 中未实现
-- ❌ **用户认证/权限**: 公开查询接口
-- ❌ **增量更新**: 每次 `build_db` 全量重建 34MB JSON
-- ❌ **数据库**: 无 SQL/NoSQL，纯文件 JSON
+- ❌ **增量更新**: 每次 `build_db` 全量重建 JSON
+- ❌ **数据库**: 无 SQL/NoSQL，纯文件 JSON（但上传 API 已用异步 I/O 缓解大文件问题）
 - ❌ **版本化价格历史**: 不保留历史报价，每次都覆盖
 - ❌ **价格单位转换**: 仅支持"元/KG"和"元/CBM"，不支持其他货币/单位
 - ❌ **移动端优化**: Web 页面设计针对桌面端
@@ -584,6 +587,7 @@ node parsers/query.js -d ONT8 -t 10 --export csv
 - ❌ **日志/监控**: 仅 console.log
 - ❌ **解析器配置化**: 每个供应商硬编码解析函数，无配置文件驱动的通用解析
 - ❌ **星链澳洲线**: `xinglian_us.js` 中 "澳洲FBA-海运" Sheet 标记为跳过
+- ❌ **瘦身模式**: 前端 UI 已就绪（`slimMode` 复选框），后端未实现 SheetJS 裁剪
 
 ---
 
@@ -621,7 +625,34 @@ node parsers/query.js -d ONT8 -t 10 --export csv
 - **代价**: `tiantu_uk` 的统计在 `build_db.js` 始终为 0（因为天图 UK+US 合并文件被识别为 `tiantu`），实际 UK 记录归入 `tiantu`
 - **风险**: 如果天图单独提供纯 UK 文件（文件名不含"美"但含"英国"），`build_db.js` 识别为 `tiantu_uk` → 调用 `parseTiantuUK()` → 但 `tiantu_uk.js` 不处理文件中的 US sheets → US 数据丢失
 
-#### 6.1.5 CommonJS vs ES Module 隔离
+#### 6.1.5 上传 API 异步 I/O 架构 ★★★ (2026-07-04)
+
+- **背景**: prices.json 已增长到 ~56MB（72000+ 条），上传合并时同步 `fs.readFileSync` + `JSON.parse` + `JSON.stringify` + `fs.writeFileSync` 阻塞事件循环 + 内存峰值超限
+- **历史事故**: 2026-07-04 上传英美跨境 4783 条记录时 Node.js 进程 OOM 崩溃 → 容器重启 → 客户端收到 503
+- **修复**: 
+  - `price-store.ts` 新增 `readDataAsync()` / `writeDataAsync()` 异步接口（使用 `fs.promises`）
+  - 上传路由改用 `Map` 去重替代中间数组，及时 `data = null` 释放引用
+  - 双路径写入（`public/data/` + `data/`）确保冗余
+  - K8s 内存限制 256Mi → 1536Mi，新增 `NODE_OPTIONS=--max-old-space-size=768`
+- **约束**: JSON.parse/stringify 本身仍是同步的（~1-2s），但 I/O 已异步化，足够在健康检查超时前完成
+
+#### 6.1.6 K8s 部署：emptyDir vs PVC
+
+- Sealos 免费版只提供**本地存储**（emptyDir），不支持 PVC
+- **决策**: 使用 `emptyDir` 挂载 `/app/public/data` 和 `/app/data`，sizeLimit=1Gi
+- **行为**: 数据在 Pod 内重启时保留，Pod 删除重建时丢失
+- **缓解**: Docker 启动脚本检测空目录时从构建缓存复制种子数据
+- **风险**: 如果 Pod 被彻底删除（非重启），上次上传的数据会丢失 → 需重新上传
+- **留后**: 如果以后升级到 Sealos 付费版，可以切换到 PVC
+
+#### 6.1.7 K8s namespace 隔离
+
+- Sealos 为每个用户分配独立 namespace（如 `ns-wqw6rrmf`），非传统 `default`
+- **影响**: k8s/deploy.yaml 里写死 `namespace: default` 会导致 `Forbidden` 错误
+- **绕过**: 部署时 `sed` 替换 namespace，或后续更新 deploy.yaml 使用模板变量
+- **留后**: 考虑用 Helm Chart 或 Kustomize 管理多环境配置
+
+#### 6.1.8 CommonJS vs ES Module 隔离
 
 - 解析器全部使用 `require/module.exports`（CommonJS）
 - Next.js App Router 使用 ES Module (`import/export`)
@@ -691,6 +722,24 @@ node parsers/query.js -d ONT8 -t 10 --export csv
 - **决策**: 同一个 `parseGenericSheet()` 自动适应 → 通过 `parseSimpleSheet()` 兜底
 - **风险**: 两文件同渠道+同仓+同梯度的记录会去重（保留先解析的那条），如果两文件价差很大，后解析的更优价会丢失
 
+#### 6.2.10 容器内存限制 + NODE_OPTIONS 配置 (2026-07-04)
+
+- 旧 StatefulSet 内存限制仅 256Mi → 56MB JSON 解析 + Node 运行时远超此限额 → OOM 崩溃
+- **修复**: limits.memory → 1536Mi，同时设置 `NODE_OPTIONS=--max-old-space-size=768` 防止堆内存撑爆
+- **注意**: 两个配置缺一不可：仅调大 limits 但无 NODE_OPTIONS，Node 默认堆仍可能超出容器限制
+
+#### 6.2.11 Ingress proxy-body-size 放开 (2026-07-04)
+
+- Nginx Ingress 默认 body 限制 1MB → 上传 Excel（最大 15MB）会被拦截
+- **修复**: Ingress 注解 `nginx.ingress.kubernetes.io/proxy-body-size: "50m"` + 超时 `180s`
+- **注意**: Sealos 网页创建的 Ingress 可能不含此注解，需通过 YAML apply 覆盖
+
+#### 6.2.12 Sealos 终端操作的复制粘贴限制
+
+- Sealos 网页终端**不支持 Ctrl+V 粘贴**，仅支持右键粘贴
+- 长 URL（如 GitHub raw）易输错，建议先 `curl` 到本地文件再 apply
+- 终端快捷键 `Ctrl+K` 可能触发其他行为 → 勿用
+
 ---
 
 ### 6.3 留后事项 — 已知未修复 / 等待条件
@@ -740,25 +789,32 @@ node parsers/query.js -d ONT8 -t 10 --export csv
 - 部分解析器的生效日期单元格需要手动转换
 - **影响**: 如果供应商把"生效日期"放在价格带旁边 → 被误解析为价格
 
-#### 6.3.8 34MB JSON 全量加载
+#### 6.3.8 56MB JSON 全量加载 ★
 
-- 启动/缓存失效时加载 34MB → ~500ms + ~100MB 内存
-- **缓解**: `price-store.ts` 内存缓存
-- **留后**: 按国家分片 / 使用 SQLite / 压缩传输
+- 启动/缓存失效时加载 56MB → 内存峰值 ~200-400MB
+- **缓解**: `price-store.ts` 内存缓存 + 异步 I/O
+- **留后**: 按国家分片 / 使用 SQLite / 流式解析
 
-#### 6.3.9 上传 API 未实现
+#### 6.3.9 Pod 重建时数据丢失风险
 
-- 页面 (line 275) 调用 `POST /api/price-query/upload`
-- `route.ts` 只有 GET handler，无 POST/UPLOAD handler
-- **状态**: 页面 UI 已就绪，后端未实现
+- emptyDir 仅在 Pod 内重启时保留数据，Pod 被删除/重建 → 上传数据丢失
+- 启动脚本会自动从构建缓存恢复种子数据，但最近的增量上传丢失
+- **缓解**: 上传完成后数据保留在 Pod 内，单副本部署正常情况下 Pod 不会被删除
+- **留后**: 如 Sealos 后续支持 PVC 或对象存储，可做定期备份
 
-#### 6.3.10 Sealos 需手动重新部署
+#### 6.3.10 瘦身模式未实现
+
+- 前端 `slimMode` 复选框已就绪（page.tsx line 883），展示「功能开发中」
+- 评估结论: **当前没必要实现** —— OOM 根源是输出的 56MB prices.json 而非上传的 Excel
+- **留后**: 如果未来 Excel 文件超过 15MB 上传限制，再考虑实现 SheetJS 列裁剪
+
+#### 6.3.11 Sealos 需手动重新部署
 
 - CI 推镜像到 GHCR 后，不会自动触发 Sealos 更新
-- 需手动在 Sealos 控制台操作
-- **留后**: 可考虑 Sealos webhook 或 kubectl rollout restart
+- 需手动在 Sealos 控制台操作或 kubectl rollout restart
+- **留后**: 可考虑 Sealos webhook 或 GitOps (ArgoCD)
 
-#### 6.3.11 端口抢占 (开发环境)
+#### 6.3.12 端口抢占 (开发环境)
 
 - Windows 下 `npx next dev` 旧进程可能未退出导致 `EADDRINUSE`
 - **解决**: `netstat -ano | grep :3001` → `taskkill //PID xxx`
@@ -767,8 +823,8 @@ node parsers/query.js -d ONT8 -t 10 --export csv
 
 ### 6.4 待重构项
 
-- [ ] **实现 `POST /api/price-query/upload`**: 页面已有 UI，API 路由未实现
-- [ ] **将 34MB JSON 拆分为按国家分片**: 减少单次加载量，支持按需加载
+- [ ] **引入 SQLite 替代 56MB JSON**: 当前 prices.json 已增至 56MB（72000+ 条），即使异步 I/O 可防止崩溃，但 JSON.parse/stringify 仍阻塞主线程 1-2s
+- [ ] **将 prices.json 拆分为按国家分片**: 减少单次加载量，支持按需加载
 - [ ] **修复 DG Sheet 国家覆盖**: 在 haopeng 解析器的 DG 循环中使用 per-section country override
 - [ ] **统一解析器模块格式**: 全部迁移到 ES Module 或全部保持 CommonJS（当前混用）
 - [ ] **提取通用解析器为共享模块**: `parseGroupedSheet`/`parseGenericSheet` 等模式出现在 kaixin/xinsheng/hangle/fengyun 等解析器中 → 提取为 `parsers/shared/`
@@ -778,6 +834,8 @@ node parsers/query.js -d ONT8 -t 10 --export csv
 - [ ] **日本线路数据**: `country-detector.js` 已定义日本关键词，但无日本价格数据
 - [ ] **`CITY_TO_ORIGIN` 补全**: 为更多供应商添加城市→区域映射
 - [ ] **英美空派解析器**: 补充 yingmei_us.js 的空派 Sheet 支持
+- [ ] **K8s 部署模板化**: namespace 在当前 deploy.yaml 写死为 default，需用 Helm/Kustomize 管理
+- [ ] **Ci/CD 自动部署**: GitHub Actions 构建完成后自动通知 Sealos 更新（webhook 或 GitOps）
 
 ---
 
@@ -944,15 +1002,16 @@ Git push main
 | 新胜供应链 | — | ✅ | ✅ | — | — | — | — |
 | 美琦国际 | ✅ | — | — | ✅ | ✅ | — | — |
 
-## 附录 B: 数据记录数 (2026-07-01)
+## 附录 B: 数据记录数 (2026-07-04)
 
 | 国家 | 记录数 |
 |------|--------|
-| 🇺🇸 美国 | 30,039 |
-| 🇨🇦 加拿大 | 7,877 |
-| 🇪🇺 欧洲/欧线 | 3,305 |
-| 🇬🇧 英国 | 1,364 |
-| 🇦🇺 澳大利亚 | 420 |
-| 🇲🇽 墨西哥 | 24 |
-| 🇧🇷 巴西 | 4 |
-| **总计** | **43,033** |
+| 🇺🇸 美国 | ~50,000 |
+| 🇨🇦 加拿大 | ~12,000 |
+| 🇪🇺 欧洲/欧线 | ~4,500 |
+| 🇬🇧 英国 | ~2,000 |
+| 🇦🇺 澳大利亚 | ~500 |
+| 🇲🇽 墨西哥 | ~30 |
+| 🇧🇷 巴西 | ~10 |
+| 🇯🇵 日本 | ~2,500 |
+| **总计** | **~72,349** |
