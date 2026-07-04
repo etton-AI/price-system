@@ -802,11 +802,11 @@ node parsers/query.js -d ONT8 -t 10 --export csv
 - **缓解**: 上传完成后数据保留在 Pod 内，单副本部署正常情况下 Pod 不会被删除
 - **留后**: 如 Sealos 后续支持 PVC 或对象存储，可做定期备份
 
-#### 6.3.10 瘦身模式未实现
+#### 6.3.10 瘦身模式已移除
 
-- 前端 `slimMode` 复选框已就绪（page.tsx line 883），展示「功能开发中」
-- 评估结论: **当前没必要实现** —— OOM 根源是输出的 56MB prices.json 而非上传的 Excel
-- **留后**: 如果未来 Excel 文件超过 15MB 上传限制，再考虑实现 SheetJS 列裁剪
+- 前端 `slimMode` 复选框 2026-07-04 已删除（commit 770e9dc）
+- 评估结论: **没必要实现** —— OOM 根源是服务端 56MB prices.json，非上传 Excel
+- 上传描述改为："系统自动识别供应商并合并入库，处理大数据库约需 5-10 秒"
 
 #### 6.3.11 Sealos 需手动重新部署
 
