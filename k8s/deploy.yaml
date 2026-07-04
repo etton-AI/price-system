@@ -74,22 +74,8 @@ spec:
               mountPath: /app/data
       volumes:
         - name: data-volume
-          persistentVolumeClaim:
-            claimName: price-system-data-pvc
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: price-system-data-pvc
-  namespace: default
-  labels:
-    app: price-system
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 1Gi
+          emptyDir:
+            sizeLimit: 1Gi
 ---
 apiVersion: v1
 kind: Service
