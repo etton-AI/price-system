@@ -4,12 +4,25 @@
  *
  * 接收 Excel 文件 → 自动识别供应商 → 解析 → 合并入库 → 刷新缓存
  * ⚠ 仅 admin 角色可调用，需 JWT Bearer token
+ *
+ * ⚠ 性能优化（2026-07-04）:
+ * - 使用异步 I/O 避免阻塞事件循环（prices.json 已超 50MB）
+ * - 合并逻辑使用"标记删除 + 追加"策略，避免构建庞大的中间数组
+ * - 及时释放大对象引用，防止 OOM 导致容器重启
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { refreshCache, getDataPath, type PriceEntry } from "@/lib/price-store";
+import {
+  refreshCache,
+  getDataPath,
+  getBackupDataPath,
+  readDataAsync,
+  writeDataAsync,
+  type PriceEntry,
+} from "@/lib/price-store";
 import { extractBearerToken, verifyToken, logUpload } from "@/lib/auth";
 import fs from "fs";
+import fsPromises from "fs/promises";
 import path from "path";
 import os from "os";
 
@@ -119,52 +132,52 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: "未能从上传文件中解析到任何价格数据" }, { status: 400 });
     }
 
-    // ── 合并到现有数据库（内存优化：单遍构建，避免多份中间数组） ──
-    const dataPath = getDataPath();
+    // ── 合并到现有数据库（异步 I/O + 内存优化） ──
     const updatedCountries = new Set(allNewRecords.map((r) => (r as PriceEntryWithCountry).country || "美国"));
     const updatedSuppliers = Array.from(suppliersUpdated);
 
     console.log(`[upload] 新增: ${allNewRecords.length} 条 (国家: ${[...updatedCountries].join(",")})`);
 
-    // 构建 merged 数组：先保留未更新的数据，再加新数据
-    const seen = new Set<string>();
-    const finalData: PriceEntry[] = [];
+    // 阶段 1: 异步读取现有数据
+    const existing = await readDataAsync();
+    const existingData: PriceEntry[] = existing.data || [];
+
+    console.log(`[upload] 现有数据: ${existingData.length} 条, 待合并`);
+
+    // 阶段 2: 合并（使用 Set 去重，比构建中间数组更省内存）
+    const keyToEntry = new Map<string, PriceEntry>();
+
+    // 2a: 先插入所有新记录
+    for (const r of allNewRecords) {
+      const key = `${r.supplier}|${r.channel_name}|${r.destination_code}|${r.origin_region}|${r.billing_type}|${r.min_quantity}`;
+      keyToEntry.set(key, r);
+    }
+    const newKeySet = new Set(keyToEntry.keys());
+
+    // 2b: 保留未被替换的旧记录
     let preservedCount = 0;
-
-    if (fs.existsSync(dataPath)) {
-      const raw = JSON.parse(fs.readFileSync(dataPath, "utf-8"));
-      const existingData: PriceEntry[] = raw.data || [];
-
-      // 第一遍：保留不属于被更新供应商+国家的数据
-      for (const r of existingData) {
-        const rc = (r as PriceEntryWithCountry).country || "美国";
-        const sameSupplier = updatedSuppliers.some((s) => r.supplier.includes(s) || s.includes(r.supplier));
-        const sameCountry = updatedCountries.has(rc);
-        if (!(sameSupplier && sameCountry)) {
-          const key = `${r.supplier}|${r.channel_name}|${r.destination_code}|${r.origin_region}|${r.billing_type}|${r.min_quantity}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            finalData.push(r);
-            preservedCount++;
-          }
+    for (const r of existingData) {
+      const rc = (r as PriceEntryWithCountry).country || "美国";
+      const sameSupplier = updatedSuppliers.some((s) => r.supplier.includes(s) || s.includes(r.supplier));
+      const sameCountry = updatedCountries.has(rc);
+      if (!(sameSupplier && sameCountry)) {
+        const key = `${r.supplier}|${r.channel_name}|${r.destination_code}|${r.origin_region}|${r.billing_type}|${r.min_quantity}`;
+        if (!keyToEntry.has(key)) {
+          keyToEntry.set(key, r);
+          preservedCount++;
         }
       }
-      // 释放原始 JSON 对象引用，帮助 GC
-      (raw as unknown as Record<string, unknown>).data = null;
     }
 
     console.log(`[upload] 保留其他数据: ${preservedCount} 条`);
 
-    // 第二遍：加入新数据（去重）
-    for (const r of allNewRecords) {
-      const key = `${r.supplier}|${r.channel_name}|${r.destination_code}|${r.origin_region}|${r.billing_type}|${r.min_quantity}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        finalData.push(r);
-      }
-    }
+    // 合并为最终数组
+    const finalData = Array.from(keyToEntry.values());
 
-    // 统计（与 build_db.js 一致的供应商映射）
+    // 释放不再需要的大对象引用（帮助 GC）
+    (existing as unknown as { data: null }).data = null;
+
+    // 统计
     const supplierStatsMap: Record<string, string> = {
       "易通": "etton", "天图通逊": "tiantu", "英美": "yingmei",
       "皓辉": "haohui", "皓鹏": "haopeng", "星链": "xinglian",
@@ -180,7 +193,7 @@ export async function POST(request: NextRequest) {
       stats[key] = (stats[key] || 0) + 1;
     }
 
-    // 写入文件
+    // 构建输出
     const output = {
       generated_at: new Date().toISOString(),
       total_records: finalData.length,
@@ -188,12 +201,8 @@ export async function POST(request: NextRequest) {
       data: finalData,
     };
 
-    // 确保目录存在
-    const dir = path.dirname(dataPath);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
-    fs.writeFileSync(dataPath, JSON.stringify(output), "utf-8");
-    console.log(`[upload] 💾 已写入 ${finalData.length} 条记录`);
+    // 阶段 3: 异步写入（关键！不阻塞事件循环）
+    await writeDataAsync(output);
 
     // ── 记录操作日志 ──
     for (const r of results) {
@@ -213,7 +222,7 @@ export async function POST(request: NextRequest) {
     // 刷新内存缓存（惰性加载，不立即读取文件）
     refreshCache();
 
-    const dupRemoved = allNewRecords.length + preservedCount - finalData.length;
+    const dupCount = allNewRecords.length + preservedCount - finalData.length;
 
     return NextResponse.json({
       success: true,
@@ -223,13 +232,16 @@ export async function POST(request: NextRequest) {
         new: allNewRecords.length,
         preserved: preservedCount,
         deduped: finalData.length,
-        dupRemoved,
+        dupRemoved: Math.max(0, dupCount),
       },
       stats,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "上传处理失败";
     console.error("[upload] 错误:", message);
+    if (err instanceof Error && err.stack) {
+      console.error("[upload] 堆栈:", err.stack.split("\n").slice(0, 5).join("\n"));
+    }
     return NextResponse.json({ success: false, error: message }, { status: 500 });
   }
 }

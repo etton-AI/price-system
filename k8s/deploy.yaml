@@ -27,22 +27,25 @@ spec:
               memory: 512Mi
             limits:
               cpu: 1000m
-              memory: 1Gi
+              memory: 1536Mi
           readinessProbe:
             httpGet:
               path: /price-query
               port: 3000
-            initialDelaySeconds: 5
-            periodSeconds: 10
+            initialDelaySeconds: 10
+            periodSeconds: 15
           livenessProbe:
             httpGet:
               path: /price-query
               port: 3000
-            initialDelaySeconds: 15
+            initialDelaySeconds: 30
             periodSeconds: 30
+            failureThreshold: 5
           env:
             - name: NODE_ENV
               value: "production"
+            - name: NODE_OPTIONS
+              value: "--max-old-space-size=768"
             # ── 权限管理环境变量（从 Secret 注入） ──
             # - name: JWT_SECRET
             #   valueFrom:
@@ -64,6 +67,29 @@ spec:
             #     secretKeyRef:
             #       name: price-system-secret
             #       key: BASIC_PASS
+          volumeMounts:
+            - name: data-volume
+              mountPath: /app/public/data
+            - name: data-volume
+              mountPath: /app/data
+      volumes:
+        - name: data-volume
+          persistentVolumeClaim:
+            claimName: price-system-data-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: price-system-data-pvc
+  namespace: default
+  labels:
+    app: price-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
 ---
 apiVersion: v1
 kind: Service
@@ -88,8 +114,9 @@ metadata:
   namespace: default
   annotations:
     kubernetes.io/ingress.class: nginx
-    # 以下注解按 Sealos 域名配置自行调整
-    # nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "180s"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "180s"
 spec:
   rules:
     - host: wlylcsujbziw.cloud.sealos.io
