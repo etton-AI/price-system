@@ -50,11 +50,26 @@ export interface UploadLogEntry {
   error?: string;
 }
 
-// ── 环境变量 ──
+// ── 运行时环境变量读取 ──
+// 注意：不能使用 process.env.KEY 或顶层 const 缓存，Next.js standalone
+// 构建时 webpack 会内联这些值，导致运行时环境变量不生效。
+// 必须在函数内动态读取 process.env。
 
-const JWT_SECRET_RAW = process.env["JWT_SECRET"] || "";
-const ADMIN_PASSWORD = process.env["ADMIN_PASSWORD"] || "etton2026";
-const GUEST_PASSWORD = process.env["GUEST_PASSWORD"] || "visit20260703";
+function readEnv(key: string, fallback = ""): string {
+  const env = process.env as Record<string, string | undefined>;
+  for (const [k, v] of Object.entries(env)) {
+    if (k === key) return v ?? fallback;
+  }
+  return fallback;
+}
+
+function getAdminPassword(): string {
+  return readEnv("ADMIN_PASSWORD", "etton2026");
+}
+
+function getGuestPassword(): string {
+  return readEnv("GUEST_PASSWORD", "visit20260703");
+}
 
 // ── 常量 ──
 
@@ -63,10 +78,11 @@ export const PASSWORD_EXPIRY_DAYS = 30;
 // ── JWT Secret ──
 
 function getJwtSecret(): Uint8Array {
-  if (!JWT_SECRET_RAW) {
+  const secret = readEnv("JWT_SECRET");
+  if (!secret) {
     throw new Error("[auth] JWT_SECRET 环境变量未设置");
   }
-  return new TextEncoder().encode(JWT_SECRET_RAW);
+  return new TextEncoder().encode(secret);
 }
 
 // ── 用户存储路径 ──
@@ -123,8 +139,8 @@ export function getUsers(): User[] {
     if (!process.env["ADMIN_PASSWORD"]) console.warn("[auth] ADMIN_PASSWORD 未设置，使用默认密码 etton2026");
     if (!process.env["GUEST_PASSWORD"]) console.warn("[auth] GUEST_PASSWORD 未设置，使用默认密码 visit20260703");
     const defaultUsers: User[] = [
-      makeUser("admin", ADMIN_PASSWORD, "admin"),
-      makeUser("guest", GUEST_PASSWORD, "guest"),
+      makeUser("admin", getAdminPassword(), "admin"),
+      makeUser("guest", getGuestPassword(), "guest"),
     ];
     fs.writeFileSync(USERS_PATH, JSON.stringify({ users: defaultUsers }, null, 2), "utf-8");
     console.log("[auth] 已创建默认账号: admin (管理员) + guest (访客)");

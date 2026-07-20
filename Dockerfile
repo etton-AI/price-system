@@ -13,7 +13,8 @@ RUN mkdir -p /app/public/data /app/data
 # 生成价格数据 (解析 Excel → JSON)
 RUN node parsers/build_db.js
 
-RUN npm run build
+ARG CACHEBUST=1
+RUN echo "cachebust: ${CACHEBUST}" && npm run build
 
 # ---- Production Stage ----
 FROM node:22-alpine AS runner
