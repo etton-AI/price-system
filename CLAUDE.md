@@ -46,9 +46,9 @@ data/ + public/data/       # 价格 JSON 数据 + 用户数据
 | 用户名 | 默认密码 | 角色 | 说明 |
 |--------|----------|------|------|
 | `admin` | `etton2026` | 管理员 | 可查询 + 上传更新价格 |
-| `viewer` | `visit20260703` | 访客 | 仅可查询比价 |
+| `guest` | `visit20260703` | 访客 | 仅可查询比价 |
 
-密码通过环境变量配置：`ADMIN_PASSWORD` / `VIEWER_PASSWORD`（不设置则使用上方默认值）。
+密码通过环境变量配置：`ADMIN_PASSWORD` / `GUEST_PASSWORD`（不设置则使用上方默认值）。
 
 ### 密码过期机制
 - 密码自创建/修改之日起 **30 天**有效（可配 `PASSWORD_EXPIRY_DAYS`）
@@ -61,7 +61,7 @@ data/ + public/data/       # 价格 JSON 数据 + 用户数据
 |------|------|------|
 | `JWT_SECRET` | 生产必填 | JWT 签名密钥（32字节随机 hex） |
 | `ADMIN_PASSWORD` | 否 | admin 账号密码（默认 `etton2026`） |
-| `VIEWER_PASSWORD` | 否 | viewer 账号密码（默认 `visit20260703`） |
+| `GUEST_PASSWORD` | 否 | guest 访客账号密码（默认 `visit20260703`） |
 | `PASSWORD_EXPIRY_DAYS` | 否 | 密码过期天数（默认 30） |
 
 ### 上传管控

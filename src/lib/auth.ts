@@ -52,9 +52,9 @@ export interface UploadLogEntry {
 
 // ── 环境变量 ──
 
-const JWT_SECRET_RAW = process.env.JWT_SECRET || "";
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "etton2026";
-const GUEST_PASSWORD = process.env.GUEST_PASSWORD || "visit20260703";
+const JWT_SECRET_RAW = process.env["JWT_SECRET"] || "";
+const ADMIN_PASSWORD = process.env["ADMIN_PASSWORD"] || "etton2026";
+const GUEST_PASSWORD = process.env["GUEST_PASSWORD"] || "visit20260703";
 
 // ── 常量 ──
 
@@ -120,8 +120,8 @@ function makeUser(username: string, password: string, role: "admin" | "guest"): 
 export function getUsers(): User[] {
   ensureDataDir();
   if (!fs.existsSync(USERS_PATH)) {
-    if (!process.env.ADMIN_PASSWORD) console.warn("[auth] ADMIN_PASSWORD 未设置，使用默认密码 etton2026");
-    if (!process.env.GUEST_PASSWORD) console.warn("[auth] GUEST_PASSWORD 未设置，使用默认密码 visit20260703");
+    if (!process.env["ADMIN_PASSWORD"]) console.warn("[auth] ADMIN_PASSWORD 未设置，使用默认密码 etton2026");
+    if (!process.env["GUEST_PASSWORD"]) console.warn("[auth] GUEST_PASSWORD 未设置，使用默认密码 visit20260703");
     const defaultUsers: User[] = [
       makeUser("admin", ADMIN_PASSWORD, "admin"),
       makeUser("guest", GUEST_PASSWORD, "guest"),
