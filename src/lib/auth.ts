@@ -51,34 +51,16 @@ export interface UploadLogEntry {
 }
 
 // ── 运行时环境变量读取 ──
-// 注意：不能使用 process.env.KEY 或顶层 const 缓存，Next.js standalone
-// 构建时 webpack 会内联这些值，导致运行时环境变量不生效。
-// 方案：优先读取启动时写入的 JSON 文件，绕过 webpack 静态分析。
-
-let _runtimeEnv: Record<string, string> | null = null;
-
-function loadRuntimeEnv(): Record<string, string> {
-  if (_runtimeEnv) return _runtimeEnv;
-  try {
-    const fs = require("fs");
-    const path = require("path");
-    const filePath = path.join(process.cwd(), ".env.runtime.json");
-    if (fs.existsSync(filePath)) {
-      _runtimeEnv = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-      return _runtimeEnv!;
-    }
-  } catch { /* fallback to process.env */ }
-  // 兜底：遍历 process.env
-  _runtimeEnv = {};
-  for (const [k, v] of Object.entries(process.env as Record<string, string | undefined>)) {
-    if (v !== undefined) _runtimeEnv[k] = v;
-  }
-  return _runtimeEnv;
-}
+// 使用 new Function() 动态访问 process.env，彻底绕过 webpack 静态分析。
 
 function readEnv(key: string, fallback = ""): string {
-  const env = loadRuntimeEnv();
-  return env[key] || fallback;
+  try {
+    // new Function 在运行时创建函数，webpack 无法内联其中的代码
+    const getter = new Function("k", "d", "return process.env[k] || d");
+    return getter(key, fallback) || fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 function getAdminPassword(): string {
