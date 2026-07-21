@@ -13,7 +13,7 @@ RUN mkdir -p /app/public/data /app/data
 # 生成价格数据 (解析 Excel → JSON)
 RUN node parsers/build_db.js
 
-ARG CACHEBUST=1
+ARG CACHEBUST=2
 RUN echo "cachebust: ${CACHEBUST}" && npm run build
 
 # ---- Production Stage ----
@@ -38,8 +38,20 @@ RUN cp /app/public/data/prices.json /app/public/data-init/prices.json 2>/dev/nul
 RUN cp /app/data/prices.json /app/data-init/prices.json 2>/dev/null || true
 
 # 启动脚本：首次部署时，将构建数据复制到 PVC（如果 PVC 为空）
+# 同时将 K8s 环境变量写入配置文件，防止 Next.js standalone webpack 内联问题
 RUN printf '#!/bin/sh\n\
 set -e\n\
+\n\
+# ── 将运行时环境变量写入 JSON 配置文件（绕过 webpack 内联） ──\n\
+cat > /app/.env.runtime.json << ENVEOF\n\
+{\n\
+  "JWT_SECRET": "'"${JWT_SECRET:-}"'",\n\
+  "ADMIN_PASSWORD": "'"${ADMIN_PASSWORD:-etton2026}"'",\n\
+  "GUEST_PASSWORD": "'"${GUEST_PASSWORD:-visit20260703}"'"\n\
+}\n\
+ENVEOF\n\
+echo "[startup] Runtime env config written"\n\
+\n\
 if [ ! -f /app/public/data/prices.json ]; then\n\
   echo "[startup] PVC is empty, seeding from build cache..."\n\
   mkdir -p /app/public/data /app/data\n\

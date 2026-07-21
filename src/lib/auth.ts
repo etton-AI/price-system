@@ -53,14 +53,32 @@ export interface UploadLogEntry {
 // ── 运行时环境变量读取 ──
 // 注意：不能使用 process.env.KEY 或顶层 const 缓存，Next.js standalone
 // 构建时 webpack 会内联这些值，导致运行时环境变量不生效。
-// 必须在函数内动态读取 process.env。
+// 方案：优先读取启动时写入的 JSON 文件，绕过 webpack 静态分析。
+
+let _runtimeEnv: Record<string, string> | null = null;
+
+function loadRuntimeEnv(): Record<string, string> {
+  if (_runtimeEnv) return _runtimeEnv;
+  try {
+    const fs = require("fs");
+    const path = require("path");
+    const filePath = path.join(process.cwd(), ".env.runtime.json");
+    if (fs.existsSync(filePath)) {
+      _runtimeEnv = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      return _runtimeEnv!;
+    }
+  } catch { /* fallback to process.env */ }
+  // 兜底：遍历 process.env
+  _runtimeEnv = {};
+  for (const [k, v] of Object.entries(process.env as Record<string, string | undefined>)) {
+    if (v !== undefined) _runtimeEnv[k] = v;
+  }
+  return _runtimeEnv;
+}
 
 function readEnv(key: string, fallback = ""): string {
-  const env = process.env as Record<string, string | undefined>;
-  for (const [k, v] of Object.entries(env)) {
-    if (k === key) return v ?? fallback;
-  }
-  return fallback;
+  const env = loadRuntimeEnv();
+  return env[key] || fallback;
 }
 
 function getAdminPassword(): string {
