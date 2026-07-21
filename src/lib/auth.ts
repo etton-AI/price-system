@@ -11,6 +11,7 @@ import { SignJWT, jwtVerify } from "jose";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
+import { execSync } from "child_process";
 
 // ── 类型 ──
 
@@ -51,17 +52,19 @@ export interface UploadLogEntry {
 }
 
 // ── 运行时环境变量读取 ──
-// Webpack 会替换 process 为自己的 shim，导致 process.env 不含运行时变量。
-// 用 (0, eval)("process") 间接 eval 获取真正的 Node.js process 对象，
-// webpack 无法拦截间接 eval，从而拿到真实的运行时环境变量。
+// Next.js standalone webpack 会替换 process.env 为构建时的 shim，
+// 导致运行时 K8s 环境变量无法被读取。
+// 用 execSync 直接调用 OS printenv 命令，从系统层面获取环境变量，
+// 彻底绕过所有 Node.js / webpack 层面的拦截。
 
 function readEnv(key: string, fallback = ""): string {
   try {
-    // 间接 eval 在全局作用域执行，返回真实 process，绕过 webpack shim
-    const realProcess = (0, eval)("process");
-    const val = realProcess?.env?.[key];
+    const val = execSync(`printenv ${key}`, {
+      encoding: "utf8",
+      timeout: 1000,
+    }).trim();
     if (val) return val;
-  } catch { /* */ }
+  } catch { /* fallback */ }
   return fallback;
 }
 
@@ -138,8 +141,8 @@ function makeUser(username: string, password: string, role: "admin" | "guest"): 
 export function getUsers(): User[] {
   ensureDataDir();
   if (!fs.existsSync(USERS_PATH)) {
-    if (!process.env["ADMIN_PASSWORD"]) console.warn("[auth] ADMIN_PASSWORD 未设置，使用默认密码 etton2026");
-    if (!process.env["GUEST_PASSWORD"]) console.warn("[auth] GUEST_PASSWORD 未设置，使用默认密码 visit20260703");
+    if (!readEnv("ADMIN_PASSWORD")) console.warn("[auth] ADMIN_PASSWORD 未设置，使用默认密码 etton2026");
+    if (!readEnv("GUEST_PASSWORD")) console.warn("[auth] GUEST_PASSWORD 未设置，使用默认密码 visit20260703");
     const defaultUsers: User[] = [
       makeUser("admin", getAdminPassword(), "admin"),
       makeUser("guest", getGuestPassword(), "guest"),
