@@ -51,16 +51,18 @@ export interface UploadLogEntry {
 }
 
 // ── 运行时环境变量读取 ──
-// 使用 new Function() 动态访问 process.env，彻底绕过 webpack 静态分析。
+// Webpack 会替换 process 为自己的 shim，导致 process.env 不含运行时变量。
+// 用 (0, eval)("process") 间接 eval 获取真正的 Node.js process 对象，
+// webpack 无法拦截间接 eval，从而拿到真实的运行时环境变量。
 
 function readEnv(key: string, fallback = ""): string {
   try {
-    // new Function 在运行时创建函数，webpack 无法内联其中的代码
-    const getter = new Function("k", "d", "return process.env[k] || d");
-    return getter(key, fallback) || fallback;
-  } catch {
-    return fallback;
-  }
+    // 间接 eval 在全局作用域执行，返回真实 process，绕过 webpack shim
+    const realProcess = (0, eval)("process");
+    const val = realProcess?.env?.[key];
+    if (val) return val;
+  } catch { /* */ }
+  return fallback;
 }
 
 function getAdminPassword(): string {
