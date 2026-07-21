@@ -11,7 +11,6 @@ import { SignJWT, jwtVerify } from "jose";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-import { execSync } from "child_process";
 
 // ── 类型 ──
 
@@ -52,19 +51,25 @@ export interface UploadLogEntry {
 }
 
 // ── 运行时环境变量读取 ──
-// Next.js standalone webpack 会替换 process.env 为构建时的 shim，
-// 导致运行时 K8s 环境变量无法被读取。
-// 用 execSync 直接调用 OS printenv 命令，从系统层面获取环境变量，
-// 彻底绕过所有 Node.js / webpack 层面的拦截。
+// Next.js standalone webpack 会替换 process.env 为构建时 shim，
+// 导致 K8s 运行时环境变量完全无法被代码读取。
+// 解决方案：启动脚本把环境变量写入文件，代码运行时从文件读取。
+
+function readEnvFile(key: string, fallback = ""): string {
+  try {
+    const filePath = path.join(process.cwd(), "data", `${key}.txt`);
+    if (fs.existsSync(filePath)) {
+      const val = fs.readFileSync(filePath, "utf-8").trim();
+      if (val) return val;
+    }
+  } catch { /* */ }
+  return fallback;
+}
 
 function readEnv(key: string, fallback = ""): string {
-  try {
-    const val = execSync(`printenv ${key}`, {
-      encoding: "utf8",
-      timeout: 1000,
-    }).trim();
-    if (val) return val;
-  } catch { /* fallback */ }
+  // 优先读文件（启动脚本写入的真实运行时变量）
+  const fileVal = readEnvFile(key);
+  if (fileVal) return fileVal;
   return fallback;
 }
 

@@ -21,7 +21,6 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
-# 限制 Node.js 最大老生代堆内存为 768MB（容器 1.5Gi 限制内安全值）
 ENV NODE_OPTIONS="--max-old-space-size=768"
 
 # 只复制 standalone 产出
@@ -31,14 +30,19 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/parsers ./parsers
 COPY --from=builder /app/node_modules/xlsx ./node_modules/xlsx
 
-# 保留一份构建时生成的数据作为初始种子（不会被 PVC 覆盖）
+# 保留一份构建时生成的数据作为初始种子
 RUN mkdir -p /app/public/data-init /app/data-init
 RUN cp /app/public/data/prices.json /app/public/data-init/prices.json 2>/dev/null || true
 RUN cp /app/data/prices.json /app/data-init/prices.json 2>/dev/null || true
 
-# 启动脚本：首次部署时，将构建数据复制到 PVC（如果 PVC 为空）
+# 启动脚本
 RUN printf '#!/bin/sh\n\
 set -e\n\
+mkdir -p /app/data\n\
+echo "${JWT_SECRET:-}" > /app/data/JWT_SECRET.txt\n\
+echo "${ADMIN_PASSWORD:-etton2026}" > /app/data/ADMIN_PASSWORD.txt\n\
+echo "${GUEST_PASSWORD:-visit20260703}" > /app/data/GUEST_PASSWORD.txt\n\
+echo "[startup] Env files written"\n\
 if [ ! -f /app/public/data/prices.json ]; then\n\
   echo "[startup] PVC is empty, seeding from build cache..."\n\
   mkdir -p /app/public/data /app/data\n\
@@ -47,7 +51,6 @@ if [ ! -f /app/public/data/prices.json ]; then\n\
   echo "[startup] Seed done"\n\
 else\n\
   echo "[startup] PVC has data, syncing to backup path..."\n\
-  mkdir -p /app/data\n\
   cp /app/public/data/prices.json /app/data/prices.json 2>/dev/null || true\n\
 fi\n\
 echo "[startup] Starting Next.js..."\n\
