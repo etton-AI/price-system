@@ -57,7 +57,8 @@ export interface UploadLogEntry {
 
 function readEnvFile(key: string, fallback = ""): string {
   try {
-    const filePath = path.join(process.cwd(), "data", `${key}.txt`);
+    // 使用绝对路径，因为 process.cwd() 可能被 webpack shim 替换
+    const filePath = `/app/data/${key}.txt`;
     if (fs.existsSync(filePath)) {
       const val = fs.readFileSync(filePath, "utf-8").trim();
       if (val) return val;
